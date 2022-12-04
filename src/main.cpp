@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <usbdrv.h>
+#include <usbdrv/usbdrv.h>
 
 void setup()
 {

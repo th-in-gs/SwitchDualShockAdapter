@@ -6,13 +6,15 @@ It's licensed under GPL 2 - meaning that if you distribute anything based on it 
 
 ## Getting V-USB
 
-Let's get V-USB. To us software engineers, the way embedded folks distribute libraries is a little odd. The traditional way is to download a [release from the web site](https://www.obdev.at/products/vusb/download.html), unzip it, and just copy the `usbdrv` folder into your project!
+Let's get V-USB. There's been a bit of development and bug fixing since the last official release (in 2012!), so I'm going to use the latest code from [the V-USB GitHub repo](https://github.com/obdev/v-usb).
 
-There's been a bit of development and bug fixing since the last official release (in 2012!), so I'm going to use the latest code from [the V-USB GitHub repo](https://github.com/obdev/v-usb). We'll still need to embed it in our project and edit some config files manually though.
+To us software engineers, the way embedded folks distribute libraries is a little odd. The traditional way is to download a [release from the web site](https://www.obdev.at/products/vusb/download.html), unzip it, and just copy the `usbdrv` folder into your project! Worse, if you want to use the automatic clock calibration (as we are for that 12.8MHz clock we haven't yet got working), yuou need to move some files around.
 
-In a PlatformIO project, you can just put libraries into the 'lib' folder that PlatformIO already created for you, so what we need to do is copy the `usbdrv` folder from the V-USB repo into `lib`. Note that's the `usbdrv` subfolder not the top-level of the V-USB repo!
+In a PlatformIO project, you can just put libraries into the 'lib' folder that PlatformIO already created for you. Unfortunatly we can't just add V-USB as-is as a subdirectory there, because most of the files we need are in the `usbdrv` directory, and there's a bunch of stuff we _don't_ want in the V-USB repo too.
 
-I'm already using Git to manage my prohject, so I'm going to use `git subtree` in a slightly convoluted manner:
+So, what I am going to do is put the V-USB directory at the top-level of my project, and symlink the files we really need into place in our lib directory. That way, we can get things compiling cleanly without changing the V-USB folders in any way.
+
+I'm already using Git to manage my project, so I'm going to use `git subtree` to make the directory:
 
 ```
 jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> git remote add -f v-usb https://github.com/obdev/v-usb
@@ -20,60 +22,65 @@ Updating v-usb
 From https://github.com/obdev/v-usb
  * [new branch]          master     -> v-usb/master
 
-jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> git checkout -b v-usb-staging v-usb/master
-branch 'v-usb-staging' set up to track 'v-usb/master'.
-Switched to a new branch 'v-usb-staging'
+jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> git subtree add -P v-usb v-usb/master --squash
+Added dir 'v-usb'
 
-jamie@Jamies-Air ~/D/SwitchControllerAdapter (v-usb-staging)> git subtree split --prefix=usbdrv -b v-usb-usbdrv-staging
-Created branch 'v-usb-usbdrv-staging'
-71993703f7e3e9d66d34d0cfe6c35f8285e5c070
-
-jamie@Jamies-Air ~/D/SwitchControllerAdapter (v-usb-staging)> git checkout main
-Switched to branch 'main'
-Your branch is up to date with 'origin/main'.
+jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> ls v-usb
+Makefile         circuits/        libs-host/       usbdrv/
+README.md        examples/        mkdist.sh*       v-usb.xcodeproj/
+Readme.txt       libs-device/     tests/
 ```
 
-I'm not going to go into a git tutorial here, that's rather off-topic (and I know there are _opinions_ out there on subtree management...). Whatever you do, you just need to ensure that the `usbdrv` folder, whith the contents as listed above, ends up inside the `libs` folder:
+Now, we'll symlink the actual bits of V-USB we need into place:
 
 ```
-jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> ls lib/usbdrv/
-Changelog.txt          oddebug.h              usbdrvasm15.inc
-CommercialLicense.txt  usbconfig-prototype.h  usbdrvasm16.inc
-License.txt            usbdrv.c               usbdrvasm165.inc
-Readme.txt             usbdrv.h               usbdrvasm18-crc.inc
-USB-ID-FAQ.txt         usbdrvasm.S            usbdrvasm18.inc
-USB-IDs-for-free.txt   usbdrvasm.asm          usbdrvasm20.inc
-asmcommon.inc          usbdrvasm12.inc        usbportability.h
-oddebug.c              usbdrvasm128.inc
+jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> mkdir lib/v-usb
+jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> cd lib/v-usb
+jamie@Jamies-Air ~/D/S/l/v-usb (main)> ln -s ../../v-usb/usbdrv .
+jamie@Jamies-Air ~/D/S/l/v-usb (main)> ln -s ../../v-usb/libs-device/osctune.h .
+jamie@Jamies-Air ~/D/S/l/v-usb (main)> cd ..
+jamie@Jamies-Air ~/D/S/lib (main)> cd ..
+jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> 
 ```
+
+What this does is make a [symbolic link](https://en.wikipedia.org/wiki/Symbolic_link) from the files in the V-USB folder to PlatformIO's `lib` folder, so it sees only the files necessary to compile V-USB[^entirelibhierarchy].
 
 ## Getting V-USB to compile
 
-Okay! Let's see how we're doing - is V-USB working now? Hit 'Build'!
+Okay! Let's see how we're doing - is V-USB working now?
+
+First, we'll need to hint to PlatformIO that we're actually _using_ V-USB. Add this to your `main.cpp` file, just under the existing Arduino `#include`:
+
+```
+#include <usbdrv/usbdrv.h>
+```
+
+Now, let's go! Hit 'Build'!
 
 ```
 ...
-lib/usbdrv/usbdrvasm.asm: Assembler messages:
-lib/usbdrv/usbdrvasm.asm:20: Error: unknown opcode `end'
+lib/v-usb/usbdrv/usbdrvasm.asm: Assembler messages:
+lib/v-usb/usbdrv/usbdrvasm.asm:20: Error: unknown opcode `end'
+*** [.pio/build/ATmega8/libecd/v-usb/usbdrv/usbdrvasm.asm.o] Error 1
 ...
-In file included from lib/usbdrv/usbdrv.c:10:0:
-lib/usbdrv/usbdrv.h:127:10: fatal error: usbconfig.h: No such file or directory
+In file included from lib/v-usb/usbdrv/usbdrv.c:10:0:
+lib/v-usb/usbdrv/usbdrv.h:127:10: fatal error: usbconfig.h: No such file or directory
 ...
 ```
 
-Hmm. Two errors. Let's take them one at a time.
+Hmm. Two errors (or maybe more - but if there are more it'll be the same two problems multiple times). Let's take them one at a time.
 
-For the first one, if you take a look at `lib/usbdrv/usbdrvasm.asm`, you will see it says that it's for the "IAR compiler/assembler system". That's not what we're using. And all it does is include `usbdrvasm.S`, which PlatformIO is already compiling for us. We can actually just not compile it. We'll comr backl to this after we deal with the second error.
+For the first one, if you take a look at `lib/v-usb/usbdrv/usbdrvasm.asm`, you will see it says that it's for the "IAR compiler/assembler system". That's not what we're using. And all it does is include `usbdrvasm.S`, which PlatformIO is already compiling for us. We can actually just not compile it. We'll come back to this after we deal with the second error.
 
-The second error should not really be surprising. We still need to configure V-USB, and that's done by making a file called `usbconfig.h`. So the reason compilation is failins is that we haven't done that yet. Making this file is not as arduous as it sounds - it's generally done by copying `usbconfig-prototype.h`, in the `usbdrv` folder, to `usbconfig.h`, and making changes to it. 
+The second error should not really be surprising. We still need to configure V-USB, and that's done by making a file called `usbconfig.h`. So the reason compilation is failing is that we haven't done that yet. Making this file is not as arduous as it sounds - it's generally done by copying the provided `usbconfig-prototype.h` header file to `usbconfig.h` and making small changes to it. 
 
-I don't really want to make my own `usbconfig.h` in the otherwise pristine copy of V-USB in the `lib` folder though. I'd like to keep that as a 'clean' copy of V-USB. So I will put my configuraiton in the top-level `include` folder. 
+I don't really want to make my own `usbconfig.h` in the otherwise pristine copy of V-USB though. I'd like to keep that as a 'clean' copy of V-USB. So I will put my configuration header in the top-level `include` folder. 
 
-Create a copy of `usbconfig-prototype.h` in the `include` folder PlatformIO at the top-level of our project, called `usbconfig.h`.
+So, create a copy of `usbconfig-prototype.h` in the `include` folder PlatformIO at the top-level of our project, called `usbconfig.h`.
 
-We have two things we need to do now. We need to somehow let V-USB know we've put its config file in another folder, and we also need to make PlatformIO skip the compilation of `usbdrvasm.asm`.
+We have two things we need to do now. We need to somehow let V-USB know we've put its config file in another folder, and we also need to make PlatformIO skip the needless, erroring compilation of `usbdrvasm.asm`.
 
-Unfortunately, it's not quite possible ot do this _just_ by editing the `platformio.ini` file as you might expect. But that's okay - the makers of PlatformIO have made it possible to configure it further by writing python code! Don't be too nervous, we're just going to need a little.
+Unfortunately, it's not quite possible ot do this _just_ by editing the `platformio.ini` file as you might expect. But that's okay - the makers of PlatformIO have made it possible to configure it further with Python code! Don't be too nervous, we're just going to need a little.
 
 Create a `v-usb_platformio_helper.py` file at the top level of the folder, beside `platformio.ini`, and put this in it:
 
@@ -81,11 +88,11 @@ Create a `v-usb_platformio_helper.py` file at the top level of the folder, besid
 Import("env")
 
 # V-USB has a '.asm' file in the usbdrv folder that PlatformIO will try to 
-# compile, but it's really just for "The IAR compiler/assembler system".
-# We'll make it be skipped.
+# compile - but it's really just for the "IAR compiler/assembler system" and 
+# will just cause errors. We'll make it be skipped.
 def skip_file(node):
     return None
-env.AddBuildMiddleware(skip_file, "*/lib/usbdrv/*.asm")
+env.AddBuildMiddleware(skip_file, "*/lib/v-usb/*.asm")
 
 # Make sure V-USB can find its config file, which we've placed inside the 
 # top-level include folder.
@@ -95,19 +102,19 @@ def add_usbdrv_include(node):
         CFLAGS=env["CFLAGS"] + ["-Iinclude"],
         ASFLAGS=env["ASFLAGS"] + ["-Iinclude"],
     )
-env.AddBuildMiddleware(add_usbdrv_include, "*/lib/usbdrv/*.[chS]")
+env.AddBuildMiddleware(add_usbdrv_include, "*/lib/v-usb/*.[chS]")
 ```
 
-All this is doing is adding two hooks to the PlatformIO build process. The first will cause it to skip any 'asm' files in the `usbdrv` folder, the second will cause it to add `-Iinclude` to the compiler flags for C or assembly files in the `usbdrv` folder.
+What this is doing is adding two hooks to the PlatformIO build process. The first will cause it to skip any 'asm' files in the `usbdrv` folder, the second will cause it to add `-Iinclude` to the compiler flags for C or assembly files in the `usbdrv` folder.
 
 The only thing remaining to do is to tell PlatformIO to actually use our Python file.
 
-Go back to `platformio.ini` and add `extra_scripts = pre:v-usb_platformio_helper.py`[^fullplatformioinifile].
+Go back to `platformio.ini` and add `extra_scripts = pre:v-usb_platformio_helper.py` below the `framework = arduino` line[^fullplatformioinifile].
 
 Okay, with this done, let's hit 'Build' again!
 
 ```
-...
+...<Lots of output>...
 Linking .pio/build/ATmega8/firmware.elf
 Checking size .pio/build/ATmega8/firmware.elf
 Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
@@ -117,14 +124,20 @@ Building .pio/build/ATmega8/firmware.hex
 ===================================================================== [SUCCESS] Took 0.72 seconds =====================================================================
 ```
 
-Woohoo! It all compiled - and, look, we're still using only 754 bytes of program space!
+Woohoo! It all compiled - and, look, we're still using only 754 bytes of program space! Amazing!
 
-Wait, though - isn't that the same amount as we were using before we added V-USB? Yes. Although it _does_ compile it all, the build system cleverly doesn't include any code we're not actually using in the final binary. We can expect this to grow as we actually _use_ V-USB.
+Wait, though - isn't that the same amount as we were using before we added V-USB? Yes. Although PlatfomrIO's build system _does_ compile it all, the it cleverly doesn't include any code we're not actually _using_ in the final binary. We can expect this to grow as we actually _use_ V-USB.
 
 
 # Using V-USB
 
-Great, now we're ready to use V-USB! Or are we? Unfortunately, no. We still need to _actually_ configure it. All we've done so far is copy the 'prototype' configuration. Things from now on out aren't nearly so involved though - we've basically reached the end of our configuration of PlatformIO, and are ready to start actually coding things that do stuff.
+So, great, now we're ready to use V-USB! 
+
+Or are we? 
+
+Unfortunately, no. We still need to _actually_ configure it. All we've done so far is copy the 'prototype' configuration. 
+
+Things from now on out aren't nearly so involved though - we've basically reached the end of our configuration of PlatformIO, and are ready to start actually coding things that do stuff on the chip.
 
 
 # Configuring V-USB
@@ -133,6 +146,39 @@ Open the `include/usbconfig.h` file we made a littel while ago. It's actually re
 
 
 
+[^entirelibhierarchy]The entire structure should now look like this:
+
+```
+jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> find -L ./lib
+./lib
+./lib/README
+./lib/v-usb
+./lib/v-usb/osctune.h
+./lib/v-usb/usbdrv
+./lib/v-usb/usbdrv/usbdrvasm18.inc
+./lib/v-usb/usbdrv/oddebug.h
+./lib/v-usb/usbdrv/usbconfig-prototype.h
+./lib/v-usb/usbdrv/usbdrvasm.asm
+./lib/v-usb/usbdrv/usbdrv.c
+./lib/v-usb/usbdrv/usbportability.h
+./lib/v-usb/usbdrv/usbdrvasm20.inc
+./lib/v-usb/usbdrv/usbdrvasm128.inc
+./lib/v-usb/usbdrv/asmcommon.inc
+./lib/v-usb/usbdrv/usbdrvasm12.inc
+./lib/v-usb/usbdrv/usbdrvasm16.inc
+./lib/v-usb/usbdrv/usbdrvasm15.inc
+./lib/v-usb/usbdrv/usbdrvasm18-crc.inc
+./lib/v-usb/usbdrv/Changelog.txt
+./lib/v-usb/usbdrv/Readme.txt
+./lib/v-usb/usbdrv/CommercialLicense.txt
+./lib/v-usb/usbdrv/USB-ID-FAQ.txt
+./lib/v-usb/usbdrv/usbdrvasm.S
+./lib/v-usb/usbdrv/oddebug.c
+./lib/v-usb/usbdrv/License.txt
+./lib/v-usb/usbdrv/usbdrvasm165.inc
+./lib/v-usb/usbdrv/USB-IDs-for-free.txt
+./lib/v-usb/usbdrv/usbdrv.h
+```
 
 
 [^fullplatformioinifile] For reference, it should now look something like this all together:
