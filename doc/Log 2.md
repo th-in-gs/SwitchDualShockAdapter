@@ -95,17 +95,19 @@ def skip_file(node):
 env.AddBuildMiddleware(skip_file, "*/lib/v-usb/*.asm")
 
 # Make sure V-USB can find its config file, which we've placed inside the 
-# top-level include folder.
+# top-level include folder, and header files in the v-usb library directory.
 def add_usbdrv_include(node):
     return env.Object(
         node,
-        CFLAGS=env["CFLAGS"] + ["-Iinclude"],
-        ASFLAGS=env["ASFLAGS"] + ["-Iinclude"],
+        CFLAGS=env["CFLAGS"] + ["-Iinclude", "-Ilib/v-usb"],
+        ASFLAGS=env["ASFLAGS"] + ["-Iinclude", "-Ilib/v-usb"],
     )
 env.AddBuildMiddleware(add_usbdrv_include, "*/lib/v-usb/*.[chS]")
 ```
 
-What this is doing is adding two hooks to the PlatformIO build process. The first will cause it to skip any 'asm' files in the `usbdrv` folder, the second will cause it to add `-Iinclude` to the compiler flags for C or assembly files in the `usbdrv` folder.
+What this is doing is adding two hooks to the PlatformIO build process. The first will cause it to skip any 'asm' files in the `usbdrv` folder, the second will cause it to add `"-Iinclude"` to the compiler flags for C or assembly files in the `usbdrv` folder.
+
+You might notice that I've also sneaked in an exter `-I` argument there: `"-Ilib/v-usb"`. That's going to be necessary later when we're trying to use the `osctune.h` header later.
 
 The only thing remaining to do is to tell PlatformIO to actually use our Python file.
 
@@ -143,6 +145,215 @@ Things from now on out aren't nearly so involved though - we've basically reache
 # Configuring V-USB
 
 Open the `include/usbconfig.h` file we made a littel while ago. It's actually really well documented in comments. If you want to do a deep dive yourself, feel free to go and have a read.
+
+Now we'll get to the part where we set up to run the oscilator at 12.8MHz. USB requires very precise timing. The V-USB wiki (slightly out of date :-/) describes why:
+
+> V-USB requires a precise clock because it synchronizes to the host's data stream at the beginning of each packet and then samples the bits in constant intervals. The longest data packet for low speed USB is 11 bytes. Since we don't need the CRC, we read 9 bytes at maximum. Including stuffed bits, that's a maximum of 84 bits. Bit sampling must not drift more than 1/4 bit during these 84 bits, resulting in a requirement of 0.3% clock precision.
+
+The V-USB code is _very carefully_ written. It wakes up on an interrupt when data starts arriving on the data lines of the USB connection, and receives data in very cleverly written assembly code that hits the USB timing precisely. There are various versions of the assembly routines for various clock timings (12 MHz, 12.8 MHz, 15 MHz, 16 MHz, 16.5 MHz, 18 MHz or 20 MHz) and they're all different - you can see them in the `usbdrvasmXX[X].inc` files in V-USB's source code. They only work when the chip is clocked by a source that ensures the frequency is pretty much exactly correct.
+
+The ATmega8A's internal '8Mhz' internal oscilator actually _can_ be tuned by writing values to 'OSCCAL' byte (a special memory location). 'OSCCAL' is _intended_ to be used to calibrate the oscillator to run at 8MHz reliably. The characteristics of each individual ATmega8A differ, and it's not guaranteed that it can reach 12.8MHz - but that's in theory - almost every real ATMega8 out there can reach 12.8MHz (possibly even 16MHz).
+
+Here's a chart of the typical OSCCAL to MHz ratio form [Micorchip's (ne Atmel's) AVR053 application note](https://ww1.microchip.com/downloads/en/Appnotes/Atmel-2555-Internal-RC-Oscillator-Calibration-for-tinyAVR-and-megaAVR-Devices_ApplicationNote_AVR053.pdf).
+
+[image of chart]
+
+There's no calibration value that's guaranteed to produce 12.8MHz thoguh - it will be diferent for every individual chip - and even vary over time with temperature or voltage.
+
+It sure sounds like the internal oscilator is not suitable as a clock source that has a "a requirement of 0.3% clock precision". How do we know what value to set `OSCCAL` to? And if it varies with temperature that just sounds terrible! We'd need to constantly recalibrate it. And to do that, we'd need a 'good' timer to compare it against.
+
+So, no, it's not a suitable clock source. But it can be made to be one! Back in 2008, Henrik Haftmann had the idea that you could calibrate the clock using pulses that the USB host (i.e. the computer) sends to the USB device! The USB device could measure the time between each USB 'Start Of Frame' message - which is required to be exactly 1ms. If the device thinks there's longer than 1ms between each SOF, it can speed up its own timing clock down a bit. If it thinks there's less than 1ms between each frame, it can slow it down a bit.
+
+This clever idea is implemented in the 'osctune.h' file in V-USB. V-USB is not configured to use it, though, so we'll need to configure it to do so.
+
+Backing up a bit, there are two connections that need to be made from the USB bus to the ATMega - these two connections are called 'D+' and 'D-' (D for "Data") - if you want to know more about what's actually transmitted on these lines, I'd recommend [this excellend video by Ben Eater](https://youtu.be/wdgULBpRoXk).
+
+We can't just connect them to any pin we want. One of them is required, by how V-USB works, to be connected to the pin that can trigger interrupt 0. On the ATMega8A, that's pin 4, or bit two of Port B[^Ports]. V-USB also requires that the other data line be connected to a pin that corresponds to a bit on the same port.
+
+There's another restriction though - the 'osctune.h' routines require that the 'D-' line be connected to the interrupt pin. So, we need to connect 'D-' to pin 4. Let's connect D+ to the pin right next to it, pin 5, which is bit 3 on port 2. You can see this in the pinout diagram in the datasheet:
+
+[Iamge of pinout diagram]
+
+Note that pin 4 is labeled '(INT0) PD2' and pin 5 is labeled '(INT1) PD3'. We might come to regret using pin 5 later, if we find we want to use Interrupt 1 for something - but we if that happens we can easily re-configure and use one of the other Port D pins. Let's just use these for now because they're next to each other.
+
+We'll need to tell V-USB this is what we're planning, so crack open the `usbconfig.h` file you made in the `include` folder! 
+
+The things we need to change are pretty near the top. `USB_CFG_IOPORTNAME` is probably already set to `D`. Change `USB_CFG_DMINUS_BIT` to `2`, and `USB_CFG_DPLUS_BIT` to `3`.
+
+We then need to set things up to use the dynamic clock tuning implemented in `osctune.h`, so head down to the _very bottom_ of the file and, just _before_ the `#endif`, add a line saying `#include "osctune.h"`.
+
+TODO:  DO WE ALSO NEED #define USB_INTR_CFG_SET        ((0 << ISC00) | (1 << ISC01)) ?
+
+In the `osctune.h` file itselfm there are instructions saying that:
+
+> You must declare the global character variable "lastTimer0Value" in your main code.
+
+so let's also do that. Head back to `main.cpp` and add a new global variable:
+
+char lastTimer0Value = 0;
+
+Hit 'Build'!
+
+With any luck, things should work. But we're still not _doing_ anything. Now that V-USB is configured, we'll have to add some code to initalise it.
+
+## Actually writing some code!
+
+Okay, let's change `main.cpp` to initialize V-USB! There are two things we need to do for a simple 'does nothing' device:
+
+- initialize the library;
+- implement a `usbMsgLen_t usbFunctionSetup(uchar data[8])` function that V-USB will call with incoming dataa (we'll leave it emppty for now);
+- regularly call 'usbPoll()' (according to the documentation, no longer than 50ms must pass between calls).
+
+Let's add this all to `main.cpp`. We'll also leave in the 'blinking' - but we will need to change how it works so that we're not delaying for a second - we need to call 'usbPoll()' every 50ms, remember. Instead, we'll keep track of when the last toggle of the LED was, and toggle it every time we find we've been running for more than a second since the last toggle.
+
+Here's my `main.cpp` now:
+
+```C++
+#include <Arduino.h>
+
+#include <usbdrv/usbdrv.h>
+uint8_t lastTimer0Value = 0;
+
+usbMsgLen_t usbFunctionSetup(uchar data[8])
+{
+    return 0;
+}
+
+void setup()
+{
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    // Disable interrupts for USB reset.
+    noInterrupts();         
+
+    // Initialize V-USB.
+    usbInit(); 
+
+    // V-USB wiki (http://vusb.wikidot.com/driver-api) says:
+    //      "In theory, you don't need this, but it prevents inconsistencies 
+    //      between host and device after hardware or watchdog resets."
+    usbDeviceDisconnect(); 
+    delay(250); 
+    usbDeviceConnect();
+    
+    // Enable interrupts again.
+    interrupts();           
+}
+
+void loop()
+{
+    static unsigned long lastBlink = 0;
+
+    unsigned long timeNow = millis();
+    if(timeNow - lastBlink >= 1000) {
+        lastBlink = 0;
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    }
+
+    usbPoll();
+}
+```
+
+Why's that 250ms delay necessary during initialization? To be honest, I'm not entirely sure. the V-USB Wiki says that "In theory, you don't need this, but it prevents inconsistencies between host and device after hardware resets". So, uh, let's just leave it? 250ms isn't _that_ long to wait after a plug-in.
+
+Lets-a go! Hit build!
+
+```
+/var/folders/6p/89bzfdg51_73bct78x16tgy80000gn/T//cccI9Rdo.ltrans0.ltrans.o: In function `main':
+<artificial>:(.text.startup+0x6c): undefined reference to `usbInit()'
+<artificial>:(.text.startup+0x17e): undefined reference to `usbPoll()'
+collect2: error: ld returned 1 exit status
+*** [.pio/build/ATmega8/firmware.elf] Error 1
+```
+
+Uh-oh. It looks like the functions we're calling are missing! This stumped me for a bit. What's actually going on is that C-USB is in *C*, but we're writing in *C++* (as is standard for Arduino-framework code). We just need to tell the compiler this in our main.cpp file. We need to enclose the V-USB include - and the lastTimer0Value decvlaration - in an `extern "C"` block:
+
+```C++
+extern "C" {
+    #include <usbdrv/usbdrv.h>
+    uint8_t lastTimer0Value = 0;
+}
+```
+
+Okay! let's build again!
+
+```
+Linking .pio/build/ATmega8/firmware.elf
+Checking size .pio/build/ATmega8/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [=         ]   5.8% (used 59 bytes from 1024 bytes)
+Flash: [===       ]  31.9% (used 2450 bytes from 7680 bytes)
+=================================================== [SUCCESS] Took 0.41 seconds ===================================================
+```
+
+Look! It built! And, at last, the amount of flash our code is taking up has gone up - to 2,450 bytes.
+
+That's our does-nothing software basically done!
+
+I'm going to do one last thing, which is to refctor a little to put the LED flashing into its own 'heartbeat' function and leave out main loop nice and clean. That, plus a few more comments, leaves us with this:
+
+```C++
+#include <Arduino.h>
+
+extern "C" {
+    #include <usbdrv/usbdrv.h>
+
+    // We declare this to be used by V-USB's 'osccal.h' oscilator calibration 
+    // routine.
+    uint8_t lastTimer0Value = 0;
+}
+
+usbMsgLen_t usbFunctionSetup(uchar data[8])
+{
+    return 0;
+}
+
+void setup()
+{
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    // Disable interrupts for USB reset.
+    noInterrupts();         
+
+    // Initialize V-USB.
+    usbInit(); 
+
+    // V-USB wiki (http://vusb.wikidot.com/driver-api) says:
+    //      "In theory, you don't need this, but it prevents inconsistencies 
+    //      between host and device after hardware or watchdog resets."
+    usbDeviceDisconnect(); 
+    delay(250); 
+    usbDeviceConnect();
+    
+    // Enable interrupts again.
+    interrupts();           
+}
+
+// Call regularly to blink the LED every 1 second.
+void heartbeat()
+{
+    static unsigned long lastBlink = 0;
+
+    unsigned long timeNow = millis();
+    if(timeNow - lastBlink >= 1000) {
+        lastBlink = 0;
+        digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    }
+}
+
+void loop()
+{
+    heartbeat();
+    usbPoll();
+}
+```
+
+Building this still leaves us at 2,450 bytes - I guess the compiler is smart enough to know that my refactoring doean't really change what the progrem does at all.
+
+Now, we need to set up the hardware to run it! Lets head back to our breadboard.
+
+
+## Breadboarding the USB connection
 
 
 
@@ -215,7 +426,7 @@ board_fuses.hfuse = 0xD1
 ; the chip itself.
 ; We configure the chip with fuses, above, to use the built-in 8MHz internal 
 ; oscilator. We'll then calibrate it in software to run 'too fast' at 12.8MHz.
-board_build.f_cpu = 12800000UL
+board_build.f_cpu = 12800000
 
 
 ; PlatformIO programmer settings:

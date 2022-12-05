@@ -8,11 +8,11 @@ def skip_file(node):
 env.AddBuildMiddleware(skip_file, "*/lib/v-usb/*.asm")
 
 # Make sure V-USB can find its config file, which we've placed inside the 
-# top-level include folder.
+# top-level include folder, and header files in the v-usb library directory.
 def add_usbdrv_include(node):
     return env.Object(
         node,
-        CFLAGS=env["CFLAGS"] + ["-Iinclude"],
-        ASFLAGS=env["ASFLAGS"] + ["-Iinclude"],
+        CFLAGS=env["CFLAGS"] + ["-Iinclude", "-Ilib/v-usb"],
+        ASFLAGS=env["ASFLAGS"] + ["-Iinclude", "-Ilib/v-usb"],
     )
 env.AddBuildMiddleware(add_usbdrv_include, "*/lib/v-usb/*.[chS]")
