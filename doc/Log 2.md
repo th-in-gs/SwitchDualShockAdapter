@@ -246,7 +246,7 @@ void loop()
 
     unsigned long timeNow = millis();
     if(timeNow - lastBlink >= 1000) {
-        lastBlink = 0;
+        lastBlink = timeNow;
         digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     }
 
@@ -336,7 +336,7 @@ static void heartbeat()
 
     unsigned long timeNow = millis();
     if(timeNow - lastBlink >= 1000) {
-        lastBlink = 0;
+        lastBlink = timeNow;
         digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     }
 }
@@ -347,8 +347,6 @@ void loop()
     usbPoll();
 }
 ```
-
-Building this still leaves us at 2,450 bytes - I guess the compiler is smart enough to know that my refactoring doean't really change what the progrem does at all.
 
 Now, we need to set up the hardware to run it! Lets head back to our breadboard.
 
