@@ -35,7 +35,7 @@ void setup()
 }
 
 // Call regularly to blink the LED every 1 second.
-void heartbeat()
+static void heartbeat()
 {
     static unsigned long lastBlink = 0;
 
