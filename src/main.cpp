@@ -41,7 +41,7 @@ static void heartbeat()
 
     unsigned long timeNow = millis();
     if(timeNow - lastBlink >= 1000) {
-        lastBlink = 0;
+        lastBlink = timeNow;
         digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     }
 }
