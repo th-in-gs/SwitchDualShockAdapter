@@ -152,9 +152,9 @@ Now we'll get to the part where we set up to run the oscilator at 12.8MHz. USB r
 
 The V-USB code is _very carefully_ written. It wakes up on an interrupt when data starts arriving on the data lines of the USB connection, and receives data in very cleverly written assembly code that hits the USB timing precisely. There are various versions of the assembly routines for various clock timings (12 MHz, 12.8 MHz, 15 MHz, 16 MHz, 16.5 MHz, 18 MHz or 20 MHz) and they're all different - you can see them in the `usbdrvasmXX[X].inc` files in V-USB's source code. They only work when the chip is clocked by a source that ensures the frequency is pretty much exactly correct.
 
-The ATmega8A's internal '8Mhz' internal oscilator actually _can_ be tuned by writing values to 'OSCCAL' byte (a special memory location). 'OSCCAL' is _intended_ to be used to calibrate the oscillator to run at 8MHz reliably. The characteristics of each individual ATmega8A differ, and it's not guaranteed that it can reach 12.8MHz - but that's in theory - almost every real ATMega8 out there can reach 12.8MHz (possibly even 16MHz).
+The ATmega8A's internal '8Mhz' internal oscilator actually _can_ be tuned by writing values to `OSCCAL` byte (a special memory location). `OSCCAL` is _intended_ to be used to calibrate the oscillator to run at 8MHz reliably. The characteristics of each individual ATmega8A differ, and it's not guaranteed that it can reach 12.8MHz - but that's in theory - almost every real ATMega8 out there can reach 12.8MHz (possibly even 16MHz).
 
-Here's a chart of the typical OSCCAL to MHz ratio form [Micorchip's (ne Atmel's) AVR053 application note](https://ww1.microchip.com/downloads/en/Appnotes/Atmel-2555-Internal-RC-Oscillator-Calibration-for-tinyAVR-and-megaAVR-Devices_ApplicationNote_AVR053.pdf).
+Here's a chart of the typical `OSCCAL` to MHz ratio form [Micorchip's (ne Atmel's) AVR053 application note](https://ww1.microchip.com/downloads/en/Appnotes/Atmel-2555-Internal-RC-Oscillator-Calibration-for-tinyAVR-and-megaAVR-Devices_ApplicationNote_AVR053.pdf).
 
 [image of chart]
 
@@ -348,14 +348,58 @@ void loop()
 }
 ```
 
-Now, we need to set up the hardware to run it! Lets head back to our breadboard.
-
 
 ## Breadboarding the USB connection
 
+Now we just need to put this hardware together! When we left our breadboard, it was connected to a 5v power supply, and happily blinking its LED.
 
+Remove the ATMega8 form the breadboard, and upload our new code to the it. 
 
-[^entirelibhierarchy]The entire structure should now look like this:
+Then, we'll need to update eh breadboard circuit. We need to change it so that it's powered by a USB connection, and has the pins we defined above connected to the D+ and D- lines. 
+
+USB (at least, until USB 3) has four conductors - +5v, D-, D+ and GND, so it seems like this should be pretty easy, right? Just connect things up! It's not _quite_ that straightforward (though it is _almost_ that straightforward!).
+
+First, how can we phisically connect a USB port to a breadboard? Well, there are plenty of commercial ["Micro-USB DIP adapters"](https://www.ebay.com/sch/i.html?_nkw=micro-USB+dip+adaptor) you can buy - just plug one of these into the breadboard and plug a regular USB cable into it. 
+
+Or you can go for the 'for free' route and do what I did: cut up a USB cable you literally found on the street and solder or crimp on a header. Behold!:
+
+**** Beautiful USB cable ***
+
+If you go this dodgy route, you should be sure that you know which wire in the cable corresponds to which USB line. _Usually_, the wires will be colored red for +5V, white for D+, green for D-, and black for ground. There are reportedly some cables out ther with non-standard coloring, so be careful! For +5V and GND, check with a multimeter - you can break your project and potentially also your computer if you get this wrong! For D+ and D-, you can just connect them up the way you think will work and switch them if it turns out to be wrong.
+
+One of these is that the D+ and D- lines are actually  meant to be pulled to 0.0–0.3 V for low, and 2.8–3.6 V for high - note that's way less than the 5V that's supplied. 
+
+The [ATMega8 datasheet tells us, in its Electrical Characteristics section](https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-2486-8-bit-AVR-microcontroller-ATmega8_L_datasheet.pdf#page=235) that an output low voltage when running at 5V has a max of 0.9v (great, that's in range!), and an output high voltage of 4.2V. That's higher than 3.6V (obviously). Modern USB hosts have a lot of protection built in, so, honestly, it might work. But it's playing with fire - it's within the rights fo the host to just break, perhaps permanently, if we drive it with too much voltage. We'll need to do something about it.
+
+The V-USB docs have a few suggestions[^vusbcircuits] - the one I chose is to use a low-dropout, low-quiscent current 3.3V voltage regulator to drive the whole circuit. I used a LP2950-3.3 because that's what I had handy. It's important to use a 'low dropout' ('LDO') regulator (and the LP2950 is one). This brings the ATMega8's operating voltage down to 3.3V, and so brings the output levels in line with the USB spec. So, for now, this is easy and will work fine. I wonder if it will come back to haunt me when I try to interface the DualShock controller though...
+
+Next, for reasons I admit I don't fully understand (impedence matching? Analog electronics are mostly a mystery to me...)[^68resistors], we need to connect ~68Ω resistors between the D+ and D- lines and the ATMega's pins.
+
+Lastly, we also need to connect a 1.5kΩ resistor between D- and VCC. This is to signal to the computer that we're a "Low Speed" (1.5 Mbit/s) device.
+
+Here we go! This is what my breadboard looks like now. I had to move the ATMega over a little to make roon for my new LP2950 'power supply' circuitry, but otherwise it's still the same.
+
+**** Picture of breadboard ***
+
+Let's plug it in to a computer!
+
+*** Video of blinking ***
+
+If everything is working, the LED will start to blink. And, because of our `OSCCAL` clock synchronization, it will be blinking with a precise 1s on/off rather than the 1.6s period we saw before. The USB communication with the computer is working!
+
+But wait, there's more - the computer should know about the device too! On my Mac, I can see this by opening the "System Information" app and looking in the Hardware -> USB pane:
+
+Note the device with the name "Template" and the manufacturer "obdev.at" - that's the default name manufacturer defined in  `usbconfig.h`. Our device communicated this to the computer!
+
+If you want this information in a Terminal window, `system_profiler SPUSBDataType` will print it. On Linux, `lsusb` at the command line should show you something similar. I am not personally familiar with it, but [there is reportedly a way to get this information on Windows too](https://superuser.com/questions/1411312/is-there-an-equivalent-to-linuxs-lsusb-in-windows).
+
+We'll change that naming later, when we actualy implement some functionality.
+
+For now, this seems like a good point to stop. If you're anything like me, you'll now leave your USB blinking device out and plugged in on your desktop while you work and give it a satisfied glance every now and then.
+
+See you next time, when we try to actually communicate with a Nintendo Switch.
+
+[^entirelibhierarchy] The entire structure should now look like this:
 
 ```
 jamie@Jamies-Air ~/D/SwitchControllerAdapter (main)> find -L ./lib
@@ -458,3 +502,12 @@ upload_flags =
     -b${UPLOAD_SPEED}
     -u
 ```
+
+[^vusbcircuits] Check out the Readme: https://github.com/obdev/v-usb/blob/master/circuits/Readme.txt
+
+[^68resistors] Some discussion from the designers of V-USB on the 68Ω resistors [can be found here]https://forums.obdev.at/viewtopic46cd.html?t=1394. They say it's for these reasons:
+
+> * Limit the current if zener diodes are used for voltage limiting on D+ and D-. 
+> * Limit the current in case of short circuit or if higher voltage is applied from extern. 
+> * To some degree impedance matching to the cable when sending data. 
+> * Low pass filter to avoid ringing when level is switched. 
