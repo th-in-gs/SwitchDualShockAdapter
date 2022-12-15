@@ -139,14 +139,14 @@ PROGMEM const char usbDescriptorConfiguration[] = {
             0x81,                       //  8: IN endpoint number 1
             0x03,                       //  8: attrib: Interrupt endpoint
             8, 0,                       // 16: maximum packet size
-            USB_CFG_INTR_POLL_INTERVAL, //  8: poll interval in ms
+            2,                          //  8: poll interval in ms
 
             7,                          //  8: sizeof(usbDescrEndpoint)
             USBDESCR_ENDPOINT,          //  8: descriptor type = endpoint
             0x01,                       //  8: OUT endpoint number 1
             0x03,                       //  8: attrib: Interrupt endpoint
             8, 0,                       // 16: maximum packet size
-            USB_CFG_INTR_POLL_INTERVAL, //  8: poll interval in ms
+            8,                         //  8: poll interval in ms
 };
 
 static_assert(sizeof(usbDescriptorConfiguration) == USB_PROP_LENGTH(USB_CFG_DESCR_PROPS_CONFIGURATION),
