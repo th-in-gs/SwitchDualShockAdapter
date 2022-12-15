@@ -19,7 +19,7 @@ usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
 
     lcd.print('S');
 
-    usbRequest_t* rq = (usbRequest_t*)reportIn;
+    usbRequest_t* rq = (usbRequest_t *)reportIn;
 
     if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS) {
 
@@ -41,7 +41,7 @@ usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
     return 0; /* default for not implemented requests: return no reportIn back to host */
 }
 
-static uint8_t sReport[64] = {0};
+static uint8_t sReport[64] = { 0 };
 static boolean sReportPending = false;
 static boolean sInputReportsSuspended = false;
 static boolean sLedIsOn = false;
@@ -94,13 +94,13 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
 
     uint8_t inputBufferLength = prepareInputReportInBuffer(&sReport[2]);
 
-	uint8_t ackByte = 0x00;
-	if(ack) {
-		ackByte = 0x80;
-		if(reportInLen > 0) {
-			ackByte |= subCommand;
-		}
-	}
+    uint8_t ackByte = 0x00;
+    if(ack) {
+        ackByte = 0x80;
+        if(reportInLen > 0) {
+            ackByte |= subCommand;
+        }
+    }
 
     sReport[2 + inputBufferLength] = ackByte;
     sReport[3 + inputBufferLength] = subCommand;
@@ -147,22 +147,22 @@ void usbFunctionWriteOut(uchar *data, uchar len)
     static uint8_t reportAccumulationBuffer[64];
     static uint8_t reportAccumulationBufferCursor = 0;
     static uint8_t bytesNeeded = 0;
-    
+
     if(bytesNeeded == 0) {
         switch(data[0]) {
-            case 0x00:
+        case 0x00:
             bytesNeeded = 2;
             break;
-            case 0x01:
+        case 0x01:
             bytesNeeded = 16;
             break;
-            case 0x10:
+        case 0x10:
             bytesNeeded = 10;
             break;
-            case 0x80:
+        case 0x80:
             bytesNeeded = 2;
             break;
-            default:
+        default:
             bytesNeeded = len;
         }
     }
@@ -173,7 +173,7 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         memcpy(&reportAccumulationBuffer[reportAccumulationBufferCursor], data, len);
 
         reportAccumulationBufferCursor += len;
-        
+
         if(reportAccumulationBufferCursor == bytesNeeded) {
             reportAccumulationBufferCursor = 0;
             reportIn = reportAccumulationBuffer;
@@ -193,7 +193,7 @@ void usbFunctionWriteOut(uchar *data, uchar len)
 
     uint8_t commandLow = reportIn[0];
     uint8_t commandHigh = reportIn[1];
-    
+
     lcd.print(reportIn[0], 16);
     lcd.print(':');
 
@@ -368,15 +368,28 @@ static void ledHeartbeat()
 
 static void sendReportBlocking()
 {
-    uint8_t cursor = 0;
+    static uint8_t count = 0;
+    static bool lastLedState = false;
+    if(sLedIsOn != lastLedState) {
+        lastLedState = sLedIsOn;
+        lcd.setCursor(0, 0);
+        lcd.print('$');
+        lcd.print(count, 10);
+        count = 0;
+    }
+
+    ++count;
+    uint8_t report[sizeof(sReport)];
+    memcpy(report, sReport, sizeof(sReport));
+    uint8_t reportCursor = 0;
     do {
         while(!usbInterruptIsReady()) {
             usbPoll();
         }
-        uint8_t toSend = min(8, (uint8_t)sizeof(sReport) - cursor);
-        usbSetInterrupt(&sReport[cursor], toSend);
-        cursor += toSend;
-    } while(cursor < sizeof(sReport));
+        uint8_t bytesToSend = min(8, (uint8_t)sizeof(report) - reportCursor);
+        usbSetInterrupt(&sReport[reportCursor], bytesToSend);
+        reportCursor += bytesToSend;
+    } while(reportCursor < sizeof(report));    
     //lcd.print('<');
 }
 
