@@ -198,8 +198,29 @@ void usbFunctionWriteOut(uchar *data, uchar len)
     lcd.print(':');
 
     switch(commandLow) {
-    case 0x00:
+    case 0x80:
         lcd.print(commandHigh, 16);
+        switch(commandHigh) {
+        case 0x05:
+            // Stop HID Reports
+            sInputReportsSuspended = true;
+            break;
+        case 0x04:
+            // Start HID Reports
+            sInputReportsSuspended = false;
+            break;
+        case 0x01: {
+            // Request controller info inc. MAC address
+            static const PROGMEM uint8_t reply[] = { 0x00, 0x03, 0x43, 0x23, 0x53, 0x22, 0xa3, 0xc7 };
+            report_P(0x81, commandHigh, reply, sizeof(reply));
+        } break;
+        case 0x02:
+            report_P(0x81, commandHigh, NULL, 0);
+            break;
+        default:
+            lcd.print('?');
+            break;
+        }
         break;
     case 0x01: {
         uint8_t subCommand = reportIn[10];
@@ -289,34 +310,14 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         }
     } break;
     case 0x10:
+    case 0x00:
         lcd.print(commandHigh, 16);
         break;
-    case 0x80:
-        lcd.print(commandHigh, 16);
-        switch(commandHigh) {
-        case 0x05:
-            // Stop HID Reports
-            sInputReportsSuspended = true;
-            break;
-        case 0x04:
-            // Start HID Reports
-            sInputReportsSuspended = false;
-            break;
-        case 0x01: {
-            // Request controller info inc. MAC address
-            static const PROGMEM uint8_t reply[] = { 0x00, 0x03, 0x43, 0x23, 0x53, 0x22, 0xa3, 0xc7 };
-            report_P(0x81, commandHigh, reply, sizeof(reply));
-        } break;
-        case 0x02:
-            report_P(0x81, commandHigh, NULL, 0);
-            break;
-        default:
-            lcd.print('?');
-            break;
-        }
+    default:
+        lcd.print("UnkOut");
+        break;
     }
 }
-
 
 static void prepareInputReport()
 {
