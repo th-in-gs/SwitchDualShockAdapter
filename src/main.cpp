@@ -90,7 +90,7 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
         return;
     }
     sReport[0] = 0x21;
-    sReport[1] = (uint8_t)millis();
+    sReport[1] = usbSofCount;
 
     uint8_t inputBufferLength = prepareInputReportInBuffer(&sReport[2]);
 
@@ -124,7 +124,7 @@ static void uartReport(bool ack, byte subCommand, const uint8_t *reportIn, uint8
 static void spiReport_P(uint16_t address, uint8_t length, const uint8_t *replyData, uint8_t replyDataLength)
 {
     if(replyDataLength != length) {
-        lcd.write("!!");
+        lcd.write('!');
     }
 
     uint8_t bufferLength = replyDataLength + 5;
@@ -191,12 +191,15 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         return;
     }
 
+    uint8_t commandLow = reportIn[0];
+    uint8_t commandHigh = reportIn[1];
+    
     lcd.print(reportIn[0], 16);
     lcd.print(':');
 
-    switch(reportIn[0]) {
+    switch(commandLow) {
     case 0x00:
-        lcd.print(reportIn[1], 16);
+        lcd.print(commandHigh, 16);
         break;
     case 0x01: {
         uint8_t subCommand = reportIn[10];
@@ -280,17 +283,17 @@ void usbFunctionWriteOut(uchar *data, uchar len)
             uartReport_P(true, subCommand, NULL, 0);
             break;
         default:
-            lcd.print("?U?");
+            lcd.print('?');
             uartReport_P(false, subCommand, NULL, 0);
             break;
         }
     } break;
     case 0x10:
-        lcd.print(reportIn[1], 16);
+        lcd.print(commandHigh, 16);
         break;
     case 0x80:
-        lcd.print(reportIn[1], 16);
-        switch(reportIn[1]) {
+        lcd.print(commandHigh, 16);
+        switch(commandHigh) {
         case 0x05:
             // Stop HID Reports
             sInputReportsSuspended = true;
@@ -302,13 +305,13 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         case 0x01: {
             // Request controller info inc. MAC address
             static const PROGMEM uint8_t reply[] = { 0x00, 0x03, 0x43, 0x23, 0x53, 0x22, 0xa3, 0xc7 };
-            report_P(0x81, reportIn[1], reply, sizeof(reply));
+            report_P(0x81, commandHigh, reply, sizeof(reply));
         } break;
         case 0x02:
-            report_P(0x81, reportIn[1], NULL, 0);
+            report_P(0x81, commandHigh, NULL, 0);
             break;
         default:
-            lcd.print("?");
+            lcd.print('?');
             break;
         }
     }
@@ -318,7 +321,7 @@ void usbFunctionWriteOut(uchar *data, uchar len)
 static void prepareInputReport()
 {
     sReport[0] = 0x30;
-    sReport[1] = (uint8_t)millis();
+    sReport[1] = usbSofCount;
     uint8_t reportLength = prepareInputReportInBuffer(&sReport[2]);
     memset(&sReport[2 + reportLength], 0, sizeof(sReport) - (2 + reportLength));
 }
@@ -365,8 +368,6 @@ static void ledHeartbeat()
 
 static void sendReportBlocking()
 {
-    static uint8_t count = 0;
-
     uint8_t cursor = 0;
     do {
         while(!usbInterruptIsReady()) {
@@ -376,9 +377,7 @@ static void sendReportBlocking()
         usbSetInterrupt(&sReport[cursor], toSend);
         cursor += toSend;
     } while(cursor < sizeof(sReport));
-
-    ++count;
-    //lcd.print("<");
+    //lcd.print('<');
 }
 
 void loop()
