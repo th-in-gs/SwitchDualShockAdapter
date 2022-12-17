@@ -1,9 +1,9 @@
 #include <Arduino.h>
-#include <hd44780ioClass/hd44780_pinIO.h>
 
 extern "C" {
     #include <usbdrv/usbdrv.h>
     #include "descriptors.h"
+    void usbFunctionRxHook(const uchar *data, uchar len);
 
     // We declare this to be used by V-USB's 'osccal.h' oscilator calibration 
     // routine.
@@ -11,43 +11,52 @@ extern "C" {
     extern uchar usbDeviceAddr;
 }
 
-static hd44780_pinIO lcd(5, 7, 12, 11, 10, 9);
+#define lcd Serial
 
-usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
+void setup()
 {
-    static uint8_t sIdleRate = 0;
+    pinMode(LED_BUILTIN, OUTPUT);
 
-    lcd.print('S');
+    // Disable interrupts for USB reset.
+    noInterrupts();
 
-    usbRequest_t* rq = (usbRequest_t *)reportIn;
+    // Initialize V-USB.
+    usbInit();
 
-    if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS) {
+    // V-USB wiki (http://vusb.wikidot.com/driver-api) says:
+    //      "In theory, you don't need this, but it prevents inconsistencies
+    //      between host and device after hardware or watchdog resets."
+    usbDeviceDisconnect();
+    delay(250);
+    usbDeviceConnect();
 
-        lcd.print(rq->bRequest, 16);
+    // Enable interrupts again.
+    interrupts();
 
-        if(rq->bRequest == USBRQ_HID_GET_REPORT) {
-            /*if(rq->wValue.bytes[0] == 0x42) {
-                usbMsgPtr = (typeof(usbMsgPtr))(&sReports[sReportReadIndex]);
-                return sizeof(*sReports);
-            }*/
-        } else if(rq->bRequest == USBRQ_HID_GET_IDLE) {
-            usbMsgPtr = &sIdleRate;
-            return 1;
-        } else if(rq->bRequest == USBRQ_HID_SET_IDLE) {
-            sIdleRate = rq->wValue.bytes[1];
-        }
-    }
-
-    return 0; /* default for not implemented requests: return no reportIn back to host */
+    Serial.begin(266667);
 }
 
-static uint8_t sReport[64] = { 0 };
+static uint8_t sReports[2][64] = { 0 };
+static const uint8_t sReportSize = sizeof(sReports[0]);
+static uint8_t sCurrentReport = 0;
 static boolean sReportPending = false;
 static boolean sInputReportsSuspended = false;
 static boolean sLedIsOn = false;
 
 static uint8_t prepareInputReportInBuffer(uint8_t *buffer) 
-{
+{    
+    static uint8_t count = 0;
+
+    static boolean lastLedState  = sLedIsOn;
+    if(lastLedState != sLedIsOn) {
+        lcd.print("\r\n\nFPS: ");
+        lcd.print(count, 10);
+        lcd.print("\r\n\n");
+
+        count = 0;
+        lastLedState = sLedIsOn;
+    }
+
     buffer[0] = 0x81;
     memset(&buffer[1], 0, 10);
     
@@ -57,27 +66,40 @@ static uint8_t prepareInputReportInBuffer(uint8_t *buffer)
         buffer[3] |= 0b1000;
     }
 
+    ++count;
+
     return 11;
+}
+
+static void prepareInputReport()
+{
+    uint8_t *report = sReports[sCurrentReport];
+    report[0] = 0x30;
+    report[1] = usbSofCount;
+    const uint8_t innerReportLength = prepareInputReportInBuffer(&report[2]);
+    memset(&report[2 + innerReportLength], 0, sReportSize - (2 + innerReportLength));
 }
 
 static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *reportIn, uint8_t reportInLen) 
 {
     if(sReportPending) {
         lcd.print("RprtClsh");
-        while(1);
+        while(true);
         return;
     }
-    if(reportInLen > sizeof(sReport) - 2) {
+
+    const uint8_t reportSize = sReportSize;
+    if(reportInLen > reportSize - 2) {
         lcd.print("RprtBig");
-        while(1);
+        while(true);
         return;
     }
-    sReport[0] = reportId;
-    sReport[1] = reportCommand;
-    if(reportInLen) {
-        memcpy_P(&sReport[2], reportIn, reportInLen);
-    }
-    memset(&sReport[2 + reportInLen], 0, sizeof(sReport) - (2 + reportInLen));
+    
+    uint8_t *report = sReports[sCurrentReport];
+    report[0] = reportId;
+    report[1] = reportCommand;
+    memcpy_P(&report[2], reportIn, reportInLen);
+    memset(&report[2 + reportInLen], 0, reportSize - (2 + reportInLen));
     sReportPending = true;
 }
 
@@ -88,15 +110,19 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
         while(1);
         return;
     }
-    if(reportInLen > sizeof(sReport) - 2) {
+
+    const uint8_t reportSize = sReportSize;
+    if(reportInLen > reportSize - 2) {
         lcd.print("RprtBig");
         while(1);
         return;
     }
-    sReport[0] = 0x21;
-    sReport[1] = usbSofCount;
 
-    uint8_t inputBufferLength = prepareInputReportInBuffer(&sReport[2]);
+    uint8_t *report = sReports[sCurrentReport];
+    report[0] = 0x21;
+    report[1] = usbSofCount;
+
+    const uint8_t inputBufferLength = prepareInputReportInBuffer(&report[2]);
 
     uint8_t ackByte = 0x00;
     if(ack) {
@@ -106,12 +132,10 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
         }
     }
 
-    sReport[2 + inputBufferLength] = ackByte;
-    sReport[3 + inputBufferLength] = subCommand;
-    if(reportInLen) {
-        copyFunction(&sReport[4 + inputBufferLength], reportIn, reportInLen);
-    }
-    memset(&sReport[4 + inputBufferLength + reportInLen], 0, sizeof(sReport) - (4 + inputBufferLength + reportInLen));
+    report[2 + inputBufferLength] = ackByte;
+    report[3 + inputBufferLength] = subCommand;
+    copyFunction(&report[4 + inputBufferLength], reportIn, reportInLen);
+    memset(&report[4 + inputBufferLength + reportInLen], 0, reportSize - (4 + inputBufferLength + reportInLen));
     sReportPending = true;
 }
 
@@ -131,7 +155,7 @@ static void spiReport_P(uint16_t address, uint8_t length, const uint8_t *replyDa
         lcd.write('!');
     }
 
-    uint8_t bufferLength = replyDataLength + 5;
+    const uint8_t bufferLength = replyDataLength + 5;
     uint8_t buffer[bufferLength];
     buffer[0] = (uint8_t)(address & 0xFF);
     buffer[1] = (uint8_t)(address >> 8);
@@ -150,174 +174,125 @@ static void halt(uint8_t i)
     while(true);
 }
 
-void usbFunctionWriteOut(uchar *data, uchar len)
+template <typename Out>
+static void outputAndIterateBuffer(const uint8_t *data, const uint8_t len, const uint8_t offset, Out &out, void (*f)(uint8_t, uint8_t))
 {
-    bool reportComplete = false;
-    const uint8_t *reportIn;
+    for(uint8_t i = offset; i < len; ++i) {
+        uint8_t ch = data[i];
+        if(i == 4) {
+            out.print("  ");
+        }
+        out.print((ch >> 4) & 0xf, 16);
+        out.print(ch & 0xf, 16);
+        if(f) {
+            f(i, ch);
+        }
+    }
+}
 
-    static uint8_t reportAccumulationBuffer[sizeof(sReport)];
-    static uint8_t accumulatedReportBytes = 0;
-    
+static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const boolean stall)
+{
     static uint8_t reportId;
-    static uint8_t uartSubCommand;
-    if(accumulatedReportBytes == 0) {
-        reportId = data[0];
-        uartSubCommand = 0xff;
+    static uint8_t reportAccumulationBuffer[sReportSize];
+    static uint8_t accumulatedReportBytes = 0;
+
+    if(stall) {
+        // The host has told us it's stalling the endpoint.
+        // Abandon reception of any in-progress reports - we're not going to
+        // get the rest of it :-(
+        accumulatedReportBytes = 0;
+        return;
     }
 
     if(accumulatedReportBytes == 0) {
-        lcd.print('/');
-        lcd.print(reportId, 16);
-        lcd.print('(');
-    } 
-    lcd.print(len, 16);
+        reportId = data[0];
+        lcd.print("\r\n\n");
+    }
+
+    /*
+    lcd.print("\r\n<");
+    outputAndIterateBuffer(&usbRxToken, 1, 0, lcd, NULL);
+    lcd.print("|");
+    outputAndIterateBuffer(&usbMsgFlags, 1, 0, lcd, NULL);
+    lcd.print("|");
+    outputAndIterateBuffer(&len, 1, 0, lcd, NULL);
+    lcd.print("|");
+    uint8_t sofs = usbSofCount;
+    outputAndIterateBuffer(&sofs, 1, 0, lcd, NULL);
+    lcd.print(">  ");
+
+    outputAndIterateBuffer(data, len, 0, lcd, [](uint8_t i, uint8_t ch) {
+        reportAccumulationBuffer[accumulatedReportBytes + i] = ch;
+    });
+    if(len < 8) {
+        lcd.print('[');
+        outputAndIterateBuffer(data, 8, len, lcd, NULL);
+        lcd.print(']');
+    }
+    */
+
+    // Different reports are different lengths!
+    // Work out if this one is complete.
+    bool reportComplete = false;
 
     switch(reportId) {
-    case 0x00:
-        // Interrupt data to the control endpoint?
-        if(len != 2 ||                    // Always only 2 in length?
-           accumulatedReportBytes != 0) { // Should never have accumlated this.
-            halt(1);
+    case 0x00: // Unknown.
+    case 0x80: // Regular commands.  
+        if(len != 2 || accumulatedReportBytes != 0) { // Always only 2 in length?
+            halt(1 | reportId);
         }
         reportComplete = true;
         break;
-    case 0x80:
-        // Regular commands. 
-        if(len != 2 ||                    // Always only 2 in length?
-           accumulatedReportBytes != 0) { // Should never have accumlated this.
-            halt(2);
-        }
-        reportComplete = true;
-        break;
-    case 0x01:
-        // 'UART' commands
-        if(accumulatedReportBytes >= 8) {
-#if 0
-            if(accumulatedReportBytes == 8) {
-                uartSubCommand = data[3];
-            }
-            // Always two packets long, so if we have some bytes already
-            // this must complete the reoprt.
-            if(uartSubCommand == 0x01) {
-                /*if(data[0] == 0x01) {
-                    lcd.print(accumulatedReportBytes, 10);
-                    halt(9);
-                }*/
-                // Command 0x01 (bluetooth pair) is 16 bytes long.
-                // if(accumulatedReportBytes + len == 48) {
-                // reportComplete = true;
-                // while(1);
-                //}
-                if(accumulatedReportBytes == (8 * 2)) {
-                    lcd.setCursor(0, 0);
-                    for(uint8_t i = 0; i < len; ++i) {
-                        lcd.print((data[i] >> 4) & 0xf, 16);
-                        lcd.print(data[i] & 0xf, 16);
-                    }
-                    while(1);
-                }
-
-            } else {
-                // Commands are 16 bytes long, so if we've got in here
-                // (we already had 8 bytes accumulated), this must be the last
-                // packet.
-                reportComplete = true;
-            }
-#endif
-            reportComplete = true;
-        }
-        break;
-    case 0x10:
-        // Unknown. Status?
+    case 0x01: // 'UART' commands.
+    case 0x10: // Unknown. Status?
         if(accumulatedReportBytes == 8) {
             reportComplete = true;
         }
         break;
     default:
-        lcd.setCursor(0, 0);
-        for(uint8_t i = 0; i < len; ++i) {
-            lcd.print((data[i] >> 4) & 0xf, 16);
-            lcd.print(data[i] & 0xf, 16);
-        }
-        while(1);
+        halt(2 | reportId);
         return;
     }
 
+    lcd.print('>');
 
-    if(!reportComplete || accumulatedReportBytes ) {
-        memcpy(&reportAccumulationBuffer[accumulatedReportBytes], data, len);
-        accumulatedReportBytes += len;
-        reportIn = reportAccumulationBuffer;
-    } else {
+    // Get ready to process the report if we have it all - 
+    // or stow this packet away for accumulation if we
+    const uint8_t *reportIn;
+    if(reportComplete && accumulatedReportBytes == 0) {
+        // This report is only one packet long - we can just use it directly, 
+        // no need to deal with the reportAccumulationBuffer.
         reportIn = data;
-    }
+    } else {
+        // We need to concatenate the data into the reportAccumulationBuffer
+        // before we either process the report or return.
 
-    if(!reportComplete) {
-        return;
-    }
-
-    lcd.print(')');
-
-    // We will consume the report - set this back to 0 for next time.
-    accumulatedReportBytes = 0;
-
-    /* 
-    static uint8_t reportAccumulationBuffer[sizeof(sReport)];
-    static uint8_t bytesNeeded = 0;
-
-    if(bytesNeeded == 0) {
-        switch(data[0]) {
-        case 0x00:
-            bytesNeeded = 2;
-            break;
-        case 0x01:
-            bytesNeeded = 16;
-            break;
-        case 0x10:
-            bytesNeeded = 10;
-            break;
-        case 0x80:
-            bytesNeeded = 2;
-            break;
-        default:
-            bytesNeeded = len;
-        }
-    }
-
-    if(reportAccumulationBufferCursor > 0 || bytesNeeded > len) {
-        if(reportAccumulationBufferCursor == 0) {
-            lcd.print('|');
-            lcd.print(len, 16);
-        } else {
-            lcd.print('+');
-            lcd.print(len, 16);
-        }
-
-        memcpy(&reportAccumulationBuffer[reportAccumulationBufferCursor], data, len);
-
-        reportAccumulationBufferCursor += len;
-
-        if(reportAccumulationBufferCursor >= bytesNeeded) {
-            reportAccumulationBufferCursor = 0;
+        memcpy(reportAccumulationBuffer + accumulatedReportBytes, data, len);
+        if(reportComplete) {
+            // We've completed this report. Parse it, and set out accumulation
+            // counter back to zero for the next incoming report.
             reportIn = reportAccumulationBuffer;
-            bytesNeeded = 0;
+            accumulatedReportBytes = 0;
         } else {
+            // We need more data to complete the report.
+            accumulatedReportBytes += len;
             return;
         }
-    } else {
-        reportIn = data;
-        bytesNeeded = 0;
-        
-        lcd.print('|');
-        lcd.print(len, 16);
     }
-    */
 
-    uint8_t command = reportIn[1];
-  
+    // Deal with the report!
+    const uint8_t commandOrSequenceNumber = reportIn[1];
+
+    lcd.print(' ');
+    lcd.print(reportId, 16);
+    lcd.print(':');
+    lcd.print(commandOrSequenceNumber, 16);
+
     switch(reportId) {
-    case 0x80:
-        lcd.print(command, 16);
+    case 0x80: {
+        // A 'Regular' command.
+
+        const uint8_t command = commandOrSequenceNumber;
         switch(command) {
         case 0x05:
             // Stop HID Reports
@@ -339,13 +314,16 @@ void usbFunctionWriteOut(uchar *data, uchar len)
             lcd.print('?');
             break;
         }
-        break;
+    } break;
     case 0x01: {
-        uint8_t subCommand = reportIn[10];
+        // A 'UART' request.
+
+        const uint8_t subCommand = reportIn[10];
+        lcd.print(':');
         lcd.print(subCommand, 16);
 
         switch(subCommand) {
-        case 0x00:{
+        case 0x00: {
             // Do nothing (return report)
             static const PROGMEM uint8_t reply[] = { 0x03 };
             uartReport_P(true, subCommand, reply, sizeof(reply));
@@ -369,8 +347,8 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         } break;
         case 0x10: {
             // NVRAM read
-            uint16_t address = reportIn[11] | reportIn[12] << 8;
-            uint16_t length = reportIn[15];
+            const uint16_t address = reportIn[11] | reportIn[12] << 8;
+            const uint16_t length = reportIn[15];
             lcd.print(':');
             lcd.print(address, 16);
             lcd.print('-');
@@ -411,9 +389,8 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         } break;
         case 0x21: {
             // Set NFC/IR MCU configuration
-            // From original code: FIXME: Check ack value
-            static const PROGMEM uint8_t reply[] = { 0x01, 0x00, 0xff, 0x00, 0x03, 0x00, 0x05, 0x01 };
-            uartReport_P(false, subCommand, 0, 0);
+            // Tell the Switch 'no'.
+            uartReport_P(false, subCommand, NULL, 0);
         } break;
         case 0x03: // Set input report mode
         case 0x04: // Trigger buttons elapsed time (?)
@@ -434,47 +411,98 @@ void usbFunctionWriteOut(uchar *data, uchar len)
     } break;
     case 0x10:
     case 0x00:
-        lcd.print(command, 16);
         break;
     default:
-        lcd.print('^');
-        while(1);
+        // We should never reach here because we should've halted above.
+        halt(3 | reportId);
         break;
     }
 }
 
-static void prepareInputReport()
+void usbFunctionWriteOut(uchar *data, uchar len)
 {
-    sReport[0] = 0x30;
-    sReport[1] = usbSofCount;
-    uint8_t reportLength = prepareInputReportInBuffer(&sReport[2]);
-    memset(&sReport[2 + reportLength], 0, sizeof(sReport) - (2 + reportLength));
+    usbFunctionWriteOutOrStall(data, len, false);
 }
 
-void setup()
+void usbFunctionRxHook(const uchar *data, const uchar len)
 {
-    pinMode(LED_BUILTIN, OUTPUT);
+#if 0
+    if(usbRxToken == 0b00101101 && data[0] == 2 && data[1] == 1 ) {
+        // This is an ENDPOINT_HALT for OUT endpoint 1 (i.e. the one to us from
+        // the host). 
+        // We mneed to abandon any in-progress report reception - we won't get
+        // the rest of the report.
+        lcd.print("\n!!H!!\n");
+        usbFunctionWriteOutOrStall(data, len, true);
+    }
+#else
+    if(usbRxToken == USBPID_SETUP) {
+        const usbRequest_t *request = (const usbRequest_t *)data;
+        if((request->bmRequestType & USBRQ_RCPT_MASK) == USBRQ_RCPT_ENDPOINT && 
+           request->bRequest == USBRQ_CLEAR_FEATURE
+            /* && request->wIndex.bytes[0] == 1*/) {
+            // This is an clear of ENDPOINT_HALT for OUT endpoint 1
+            // (i.e. the one to us from the host).
+            // We need to abandon any old in-progress report reception - we
+            // won't get the rest of the report from before the stall.
+            lcd.print("\n!HALT\n");
+            usbFunctionWriteOutOrStall(data, len, true);
+        }
+    }
+#endif
+} 
 
-    // Disable interrupts for USB reset.
-    noInterrupts();
+usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
+{
+    static uint8_t sIdleRate = 0;
 
-    // Initialize V-USB.
-    usbInit();
+    lcd.print('S');
 
-    // V-USB wiki (http://vusb.wikidot.com/driver-api) says:
-    //      "In theory, you don't need this, but it prevents inconsistencies
-    //      between host and device after hardware or watchdog resets."
-    usbDeviceDisconnect();
-    delay(250);
-    usbDeviceConnect();
+    usbRequest_t* rq = (usbRequest_t *)reportIn;
 
-    // Enable interrupts again.
-    interrupts();
+    if((rq->bmRequestType & USBRQ_TYPE_MASK) == USBRQ_TYPE_CLASS) {
 
-    lcd.begin(8, 2);
-    lcd.setCursor(0, 0);
-    lcd.cursor();
-    lcd.lineWrap();
+        lcd.print(rq->bRequest, 16);
+
+        if(rq->bRequest == USBRQ_HID_GET_REPORT) {
+            if(rq->wValue.bytes[0] == 0x42) {
+                prepareInputReport();
+                usbMsgPtr = (typeof(usbMsgPtr))(&sReports[sCurrentReport]);
+                return sizeof(*sReports);
+            }
+        } else if(rq->bRequest == USBRQ_HID_GET_IDLE) {
+            usbMsgPtr = &sIdleRate;
+            return 1;
+        } else if(rq->bRequest == USBRQ_HID_SET_IDLE) {
+            sIdleRate = rq->wValue.bytes[1];
+        }
+    }
+
+    return 0; /* default for not implemented requests: return no reportIn back to host */
+}
+
+static void sendReportBlocking()
+{
+    const uint8_t reportIndex = sCurrentReport;
+
+    // Toggle the current report.
+    sCurrentReport = reportIndex == 0 ? 1 : 0;
+
+    // The next report can be filled in while we send this one.
+    // This doesn't seem to happen very much.
+    sReportPending = false;
+
+    const uint8_t reportSize = sReportSize;
+    uint8_t *report = sReports[reportIndex];
+    uint8_t reportCursor = 0;
+    do {
+        while(!usbInterruptIsReady()) {
+            usbPoll();
+        }
+        uint8_t bytesToSend = min(8, reportSize - reportCursor);
+        usbSetInterrupt(&report[reportCursor], bytesToSend);
+        reportCursor += bytesToSend;
+    } while(reportCursor < reportSize);    
 }
 
 // Call regularly to blink the LED every 1 second.
@@ -482,41 +510,12 @@ static void ledHeartbeat()
 {
     static unsigned long lastBeat = 0;
 
-    unsigned long timeNow = millis();
+    const unsigned long timeNow = millis();
     if(timeNow - lastBeat >= 1000) {
         lastBeat = timeNow;
         sLedIsOn = !sLedIsOn;
         digitalWrite(LED_BUILTIN, sLedIsOn);
-        // lcd.print(sLedIsOn ? '*' : (char)0b10100101);
     }
-}
-
-static void sendReportBlocking()
-{
-    /*static uint8_t count = 0;
-    static bool lastLedState = false;
-    if(sLedIsOn != lastLedState) {
-        lastLedState = sLedIsOn;
-        lcd.setCursor(0, 0);
-        lcd.print('$');
-        lcd.print(count, 10);
-        count = 0;
-    }
-    ++count;
-    */
-
-    uint8_t report[sizeof(sReport)];
-    memcpy(report, sReport, sizeof(sReport));
-    uint8_t reportCursor = 0;
-    do {
-        while(!usbInterruptIsReady()) {
-            usbPoll();
-        }
-        uint8_t bytesToSend = min(8, (uint8_t)sizeof(report) - reportCursor);
-        usbSetInterrupt(&sReport[reportCursor], bytesToSend);
-        reportCursor += bytesToSend;
-    } while(reportCursor < sizeof(report));    
-    //lcd.print('<');
 }
 
 void loop()
@@ -524,68 +523,20 @@ void loop()
     ledHeartbeat();
     usbPoll();
 
-#if 1
     static uchar lastAddress = 0;
     if(lastAddress != usbDeviceAddr) {
         lastAddress = usbDeviceAddr;
-        lcd.print('^');
+        lcd.print("\r\n\nController Online - USB Address:");
         lcd.print(lastAddress, 16);
-        lcd.print('^');
+        lcd.print("\r\n\n");
     }
 
     if(usbDeviceAddr != 0 && usbInterruptIsReady()) {
         if(sReportPending) {
-            // lcd.print('>');
-            // lcd.print(sReport[0], 16);
             sendReportBlocking();
-            sReportPending = false;
         } else if(!sInputReportsSuspended) {
             prepareInputReport();
             sendReportBlocking();
         }
     }
-#else
-    if(usbInterruptIsReady()) {
-        static uchar lastAddress = 0;
-        static int i = 0;
-        if(usbDeviceAddr == 0) {
-            lastAddress = 0;
-            i = 0;
-        }
-        if(lastAddress != usbDeviceAddr) {
-            i = 1;
-            lastAddress = usbDeviceAddr;
-            lcd.print(" ^");
-            lcd.print(lastAddress, 16);
-            lcd.print('^');
-        }
-
-        uint8_t sReport[64] = { 0 };
-        switch(i) {
-        case 0:
-            break;
-        case 1:
-            lcd.print(i);
-            memcpy(sReport, (const uint8_t[]) { 0x81, 0x03 }, 2);
-            usbSetInterrupt(sReport, sizeof(sReport));
-            ++i;
-            break;
-        case 2:
-            lcd.print(i);
-            memcpy(sReport, (const uint8_t[]) { 0x81, 0x01, 0x00, 0x03 }, 4);
-            usbSetInterrupt(sReport, sizeof(sReport));
-            ++i;
-            break;
-        default: {
-            if(sReportPending) {
-                lcd.print('>');
-                usbSetInterrupt(sReport, sizeof(sReport));
-                sReportPending = false;
-            }
-        } break;
-            // default:
-            break;
-        }
-    }
-#endif
 }
