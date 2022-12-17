@@ -36,6 +36,13 @@ void setup()
     Serial.begin(266667);
 }
 
+static void halt(uint8_t i)
+{
+    lcd.write(0b11110011);
+    lcd.print(i, 16);
+    while(true);
+}
+
 static uint8_t sReports[2][64] = { 0 };
 static const uint8_t sReportSize = sizeof(sReports[0]);
 static uint8_t sCurrentReport = 0;
@@ -43,23 +50,26 @@ static boolean sReportPending = false;
 static boolean sInputReportsSuspended = false;
 static boolean sLedIsOn = false;
 
-static uint8_t prepareInputReportInBuffer(uint8_t *buffer) 
+static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer) 
 {    
     static uint8_t count = 0;
+    static boolean previousLedState  = sLedIsOn;
 
-    static boolean lastLedState  = sLedIsOn;
-    if(lastLedState != sLedIsOn) {
+    if(previousLedState != sLedIsOn) {
+        // Seems like a good time to output some debug stats on how many 
+        // reports per second we're managing to generate.
         lcd.print("\r\n\nFPS: ");
         lcd.print(count, 10);
         lcd.print("\r\n\n");
 
         count = 0;
-        lastLedState = sLedIsOn;
+        previousLedState = sLedIsOn;
     }
 
     buffer[0] = 0x81;
     memset(&buffer[1], 0, 10);
     
+    // We'll alternately press the left and right dpad buttons for testing.
     if(sLedIsOn) {
         buffer[3] |= 0b100;
     } else {
@@ -76,7 +86,7 @@ static void prepareInputReport()
     uint8_t *report = sReports[sCurrentReport];
     report[0] = 0x30;
     report[1] = usbSofCount;
-    const uint8_t innerReportLength = prepareInputReportInBuffer(&report[2]);
+    const uint8_t innerReportLength = prepareInputSubReportInBuffer(&report[2]);
     memset(&report[2 + innerReportLength], 0, sReportSize - (2 + innerReportLength));
 }
 
@@ -84,14 +94,14 @@ static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *rep
 {
     if(sReportPending) {
         lcd.print("RprtClsh");
-        while(true);
+        halt(0);
         return;
     }
 
     const uint8_t reportSize = sReportSize;
     if(reportInLen > reportSize - 2) {
         lcd.print("RprtBig");
-        while(true);
+        halt(0);
         return;
     }
     
@@ -107,14 +117,14 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
 {
     if(sReportPending) {
         lcd.print("RprtClsh");
-        while(1);
+        halt(0);
         return;
     }
 
     const uint8_t reportSize = sReportSize;
     if(reportInLen > reportSize - 2) {
         lcd.print("RprtBig");
-        while(1);
+        halt(0);
         return;
     }
 
@@ -122,7 +132,7 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
     report[0] = 0x21;
     report[1] = usbSofCount;
 
-    const uint8_t inputBufferLength = prepareInputReportInBuffer(&report[2]);
+    const uint8_t inputBufferLength = prepareInputSubReportInBuffer(&report[2]);
 
     uint8_t ackByte = 0x00;
     if(ack) {
@@ -165,13 +175,6 @@ static void spiReport_P(uint16_t address, uint8_t length, const uint8_t *replyDa
     memcpy_P(&buffer[5], replyData, replyDataLength);
 
     return uartReport(true, 0x10, buffer, bufferLength);
-}
-
-static void halt(uint8_t i)
-{
-    lcd.write(0b11110011);
-    lcd.print(i, 16);
-    while(true);
 }
 
 template <typename Out>
@@ -387,25 +390,21 @@ static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const
                 break;
             }
         } break;
-        case 0x21: {
-            // Set NFC/IR MCU configuration
-            // Tell the Switch 'no'.
-            uartReport_P(false, subCommand, NULL, 0);
-        } break;
         case 0x03: // Set input report mode
         case 0x04: // Trigger buttons elapsed time (?)
         case 0x08: // Set shipment low power state
+        case 0x21: // Set NFC/IR MCU configuration
         case 0x30: // Set player lights
         case 0x38: // Set HOME light
         case 0x40: // Set IMU enabled state
         case 0x41: // Set IMU sesitivity
         case 0x48: // Set vibration enabled state
-            // Unhandled: - Empty response
+            // Unhandled, but we'll tell the switch we've handled it...
             uartReport_P(true, subCommand, NULL, 0);
             break;
         default:
-            lcd.print('?');
             uartReport_P(false, subCommand, NULL, 0);
+            halt(0b10000000 | subCommand);
             break;
         }
     } break;
@@ -417,6 +416,10 @@ static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const
         halt(3 | reportId);
         break;
     }
+
+    // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
+    lcd.print(' ');
+    lcd.print(OSCCAL, 16);
 }
 
 void usbFunctionWriteOut(uchar *data, uchar len)
@@ -512,7 +515,7 @@ static void ledHeartbeat()
 
     const unsigned long timeNow = millis();
     if(timeNow - lastBeat >= 1000) {
-        lastBeat = timeNow;
+        lastBeat += 1000;
         sLedIsOn = !sLedIsOn;
         digitalWrite(LED_BUILTIN, sLedIsOn);
     }
