@@ -16,6 +16,7 @@ extern "C" {
 void setup()
 {
     pinMode(LED_BUILTIN, OUTPUT);
+    DDRC |= (1<<5 | 1<<4 | 1<<3);
 
     // Disable interrupts for USB reset.
     noInterrupts();
@@ -33,7 +34,7 @@ void setup()
     // Enable interrupts again.
     interrupts();
 
-    Serial.begin(266667);
+   // Serial.begin(266667);
 }
 
 static void halt(uint8_t i)
@@ -52,6 +53,7 @@ static boolean sLedIsOn = false;
 
 static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer) 
 {    
+    PORTC |= 1<<3;
     static uint8_t count = 0;
     static boolean previousLedState  = sLedIsOn;
 
@@ -78,6 +80,7 @@ static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer)
 
     ++count;
 
+    PORTC &= ~(1<<3);
     return 11;
 }
 
@@ -193,7 +196,7 @@ static void outputAndIterateBuffer(const uint8_t *data, const uint8_t len, const
     }
 }
 
-static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const boolean stall)
+static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len, const boolean stall)
 {
     static uint8_t reportId;
     static uint8_t reportAccumulationBuffer[sReportSize];
@@ -241,14 +244,14 @@ static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const
     switch(reportId) {
     case 0x00: // Unknown.
     case 0x80: // Regular commands.  
-        if(len != 2 || accumulatedReportBytes != 0) { // Always only 2 in length?
+        if(len != 2 || accumulatedReportBytes != 0) { // Always only 2 bytes?
             halt(1 | reportId);
         }
         reportComplete = true;
         break;
     case 0x01: // 'UART' commands.
     case 0x10: // Unknown. Status?
-        if(accumulatedReportBytes == 8) {
+        if(accumulatedReportBytes == 8) { // These are always two packets long.
             reportComplete = true;
         }
         break;
@@ -422,6 +425,13 @@ static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const
     lcd.print(OSCCAL, 16);
 }
 
+static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const boolean stall)
+{
+    PORTC |= 1 << 4;
+    usbFunctionWriteOutOrStall_inner(data, len, stall);
+    PORTC &= ~(1 << 4);
+}
+
 void usbFunctionWriteOut(uchar *data, uchar len)
 {
     usbFunctionWriteOutOrStall(data, len, false);
@@ -486,6 +496,8 @@ usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
 
 static void sendReportBlocking()
 {
+PORTC |= 1<<5;
+
     const uint8_t reportIndex = sCurrentReport;
 
     // Toggle the current report.
@@ -506,6 +518,8 @@ static void sendReportBlocking()
         usbSetInterrupt(&report[reportCursor], bytesToSend);
         reportCursor += bytesToSend;
     } while(reportCursor < reportSize);    
+
+PORTC &= ~(1<<5); 
 }
 
 // Call regularly to blink the LED every 1 second.
