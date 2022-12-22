@@ -1,18 +1,25 @@
-In this series of posts, I'm going to (attempt to?...) make a [Dual Shock](https://en.wikipedia.org/wiki/DualShock) to [Switch](https://www.nintendo.com/switch/) controller adapter. It will plug into the Switch Dock's USB port.
+---
+title: Making a Dual Shock to Nintendo Switch controller adapter
+date: 2022-12-21
+tags: [switch-dual-shock-adapter-series, electronics, programming, hardware, atmega, atmega8a, avr, platformio,  arduino, nintendo-switch, dual-shock, project-log]
+---
+In this [series of posts](https://www.blog.montgomerie.net/tags/switch-dual-shock-adapter-series/), I'm going to (attempt to?...) make a [Dual Shock](https://en.wikipedia.org/wiki/DualShock) to [Switch](https://www.nintendo.com/switch/) controller adapter. It will plug into the Switch Dock's USB port.
 
 In doing this, I hope I'll learn about how USB works - something I've vaguely wondered about for at least twenty years - and have some fun doing low-level microcontroller programming. 
 
 I'm also looking forward to stretching my writing muscles documenting the project here. Maybe you can learn along with me?
 
+![A Nintendo Switch with a PSone 'Dual Shock' controller next to it](SwitchAndDualShock.jpeg)
+
+<!--more-->
+
 I'll be writing assuming a little knowledge of C-like programming languages (like, maybe what a pointer is) and basic electronics (maybe how to hook up an LED) - but I'll try to keep a balance between being high level and approachable and getting bogged down in the details. I'm going to start with the 'setting up the development environment' and go all the way to 'using it to play games', so hopefully the first article or two will also serve to document an easy way to start writing USB peripherals with modern software and questionably suitable hardware.
 
-I hope it all works! If not, there might be an unexpeted twist later in the series (the anticipation!)[^foreshadowing]
+I hope it all works! If not, there might be an unexpected twist later in the series (the anticipation!)[^foreshadowing]
 
-In this post, I'll get as far as setting up our development environment, and getting the traditional hardware 'Hello World!' of blinking an LED working. 
+In this post, I'll get as far as setting up the development environment, and getting the traditional hardware 'Hello World!' of blinking an LED working. 
 
 ## Game Controllers
-
-![A Nintendo Switch with a PSone 'Dual Shock' controller next to it](SwitchAndDualShock.jpeg)
 
 Why Dual Shock to Switch? Well, I have a lightly used [PSone](https://en.wikipedia.org/wiki/PlayStation_models#PS_One)-era Dual shock that still works great - I've recently used it with an [equally ancient USB adapter](https://www.google.com/search?q=xk-pc2004&tbm=isch) to play on Stadia, RIP, on my Mac. I also have a Switch, and I'd like to be able to use a comfortable external controller to play Metroid on my TV. It seems like it should be possible to put these two things together.
 
@@ -25,13 +32,13 @@ There are many, many ways to make USB accessories.
 
 I'm going to use one that's actually pretty long in the tooth now: the [ATmega8A microcontroller](https://www.microchip.com/en-us/product/ATmega8A). 
 
-The ATmega8A pretty puny as microcontrollers go. 8 bit. 1 to 20MHz. 8K of flash program memory. 1K of RAM!
+The ATmega8A is pretty puny as microcontrollers go. 8 bit. 1 to 20MHz. 8K of flash program memory. 1K of RAM!
 
-Part of a range of [AVR-instruction-set-based microcontrollers](https://en.wikipedia.org/wiki/AVR_microcontrollers), it's been around for twenty years (hey, like the Dual Shock!) - and has been very, very sucessful. There are probably a few in use in devices near you right now! It arguably triggered the 'maker' movement - the vanilla [Arduino](https://en.wikipedia.org/wiki/Arduino) is based on its slightly bigger sibling, the ATmega328 - essentially an upgraded version of the ATmega8 with 32K of program space and 2K of RAM. The AVR range is still growing! In recent years, possibly because it's nowadays rather hard to justify calling a 16MHz processor with 32K of RAM 'mega', it looks like the 'ATtiny' name has won out over the 'ATmega' one for new products; [recent ATtiny chips are more powerful than the older ATmega ones](http://www.technoblogy.com/show?3UKF).
+Part of a range of [AVR-instruction-set-based microcontrollers](https://en.wikipedia.org/wiki/AVR_microcontrollers), it's been around for twenty years (hey, like the Dual Shock!) - and has been very, very successful. There are probably a few in use in devices near you right now! It arguably was to 'maker' movement of the 2000s onward what the 6502 or Z80 was to the home computer movement of the late 70s onward: the vanilla [Arduino](https://en.wikipedia.org/wiki/Arduino) is based on its slightly bigger sibling, the ATmega328 - essentially an upgraded version of the ATmega8 with 32K of program space and 2K of RAM. The AVR range is still growing! In recent years, possibly because it's nowadays rather hard to justify calling a 16MHz processor with 32K of RAM 'mega', the 'ATtiny' name has won out over the 'ATmega' one for new products; [recent ATtiny chips are more powerful than older ATmega ones](http://www.technoblogy.com/show?3UKF).
 
-Fancier, more modern microcontrollers (even more modern AVR chips) have built-in hardware that talks USB - but the lowly ATmega8A does not. There are, though, software[^firmware] libraries that implement low speed USB at the cost of using up a few CPU cycles that could otherwise be used running application code. I'll be using [V-USB](https://www.obdev.at/products/vusb/index.html).
+Fancier, more modern microcontrollers (even more modern AVR chips) have built-in hardware that talks USB, but the lowly ATmega8A does not. There are, though, software[^firmware] libraries that implement low speed USB at the cost of using up a few CPU cycles that could otherwise be used running application code. I'll be using [V-USB](https://www.obdev.at/products/vusb/index.html).
 
-The ATmega8A is a slightly quixotic choice for 2022. Why am I using it instead of something like an [RP2040](https://www.raspberrypi.com/products/rp2040/) or an ARM SOC - or a board like a [Raspberry Pi Pico](https://www.raspberrypi.com/products/raspberry-pi-pico/) or a [Teensy](https://www.pjrc.com/teensy/)? Mainly because I have a stash of them in a drawer, and using them fits with the apparently frugal theme I've chosen for this project. Given their years-long popularity, they're still cheap and abundant - here are [10 possibly-recycled ones for $18 shipped on AliExpress](https://www.aliexpress.us/item/3256804797261223.html) - or [DigiKey has 14000 in stock for $3.28 each](https://www.digikey.com/en/products/detail/microchip-technology/ATMEGA8A-PU/1914639). It's probably possible to get a more capable chip for cheaper, but, again, I have these already.
+The ATmega8A is a slightly quixotic choice for 2022. Why am I using it instead of something like an [RP2040](https://www.raspberrypi.com/products/rp2040/) or an ARM SOC - or a board like a [Raspberry Pi Pico](https://www.raspberrypi.com/products/raspberry-pi-pico/) or a [Teensy](https://www.pjrc.com/teensy/)? Mainly because I have a stash of them in a drawer, and using them fits with the apparently frugal theme I've chosen for this project. Given their years-long popularity, they're still cheap and abundant - here are [10 possibly-surreptitiously-recycled ones for $18 shipped on AliExpress](https://www.aliexpress.us/item/3256804797261223.html) - or [DigiKey has 14000 new in stock for $3.28 each](https://www.digikey.com/en/products/detail/microchip-technology/ATMEGA8A-PU/1914639). It's probably possible to get a more capable chip for cheaper, but, again, I have these already.
 
 I do like that they're easy to work with on breadboards (though you could say the same for many small board-based systems like the Pi Pico or Teensy). 
 
@@ -82,7 +89,7 @@ What's a programmer? I use an Arduino running the "ArduinoISP" ('In-System Progr
 
 An "ArduinoISP" sketch comes as an example in the Arduino IDE - you just load it onto an Arduino in the usual manner, attach the shield, and, boom, you've got yourself a ATMega programmer. Attach it to a computer with USB, put the ATmega chip you want to program in the socket, and you can write your program onto to the chip. 
 
-Instead of this setup, if we going for more extreme minimalism, we could also set up [an Arduino, a breadboard, and a small mess of jumper wires](https://docs.arduino.cc/built-in-examples/arduino-isp/ArduinoToBreadboard)[^ArduinoISP] to be a programmer. At the other end of the scale there are standalone programmers of [variable](https://www.amazon.com/dp/B0973X6XP3/) [degrees](https://www.olimex.com/Products/AVR/Programmers/AVR-ISP-MK2/open-source-hardware) of [officalness](https://www.microchip.com/en-us/development-tool/ATAVRISP2) and [sophistication](https://www.microchip.com/en-us/development-tool/atatmel-ice). Any one would likely work. One nice thing about the Evil Mad Scientist shield in comparison to many of the others is that it has a nice [ZIF](https://en.wikipedia.org/wiki/Zero_insertion_force) socket for putting the ATmega into. With most other programmers you need to arrange to connect up a 6 or 10 pin ribbon cable to the ATmega somehow - whether that's jumper wires to a breadboard, or [something extra like this](https://www.tindie.com/products/jeffmurchison/tinyloadr-avr-breakout/). I do like [this ingenious method](https://www.tindie.com/products/ossiconelabs/isp-bridge-5atmel-attiny-x8-atmega-x8/)!
+Instead of this setup, if we were going for more extreme minimalism, we could also set up [an Arduino, a breadboard, and a small mess of jumper wires](https://docs.arduino.cc/built-in-examples/arduino-isp/ArduinoToBreadboard)[^ArduinoISP] to be a programmer. At the other end of the scale there are standalone programmers of [variable](https://www.amazon.com/dp/B0973X6XP3/) [degrees](https://www.olimex.com/Products/AVR/Programmers/AVR-ISP-MK2/open-source-hardware) of [officialness](https://www.microchip.com/en-us/development-tool/ATAVRISP2) and [sophistication](https://www.microchip.com/en-us/development-tool/atatmel-ice). Any one would likely work. One nice thing about the Evil Mad Scientist shield in comparison to many of the others is that it has a nice [ZIF](https://en.wikipedia.org/wiki/Zero_insertion_force) socket for putting the ATmega into. With most other programmers you need to arrange to connect up a 6 or 10 pin ribbon cable to the ATmega somehow - whether that's jumper wires to a breadboard, or [something extra like this](https://www.tindie.com/products/jeffmurchison/tinyloadr-avr-breakout/). I do like [this ingenious method](https://www.tindie.com/products/ossiconelabs/isp-bridge-5atmel-attiny-x8-atmega-x8/)!
 
 Anyway, enough digression. Let's tell PlatformIO and VSCode more more how we want to set up use and program our ATmega8A.
 
@@ -92,7 +99,7 @@ I'll actually be tuning the oscillator make it run at 12.8MHz (really, slightly 
 
 To do all this, I'll need to set the settings on the ATMega by 'burning the fuses' on it. This isn't as hard (or irreparable) as it sounds - it just means sending two eight bit settings values to the chip that it will store and then use to set itself up when it's powered on. The two values are referred to as the "low fuse" and "high fuse" - but they're just bytes that encode our settings. 
 
-These two bytes are broken up into bits or group of bits traditionally referred to with an `ALL CAPS NAME`. You learn what they mean by reading relevant parts of [the data sheet](https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega8A-Data-Sheet-DS40001974B.pdf#G3.1205680) - or using an [online caculator like this one](https://eleccelerator.com/fusecalc/fusecalc.php?chip=ATmega8a). 
+These two bytes are broken up into bits or group of bits traditionally referred to with an `ALL CAPS NAME`. You learn what they mean by reading relevant parts of [the data sheet](https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega8A-Data-Sheet-DS40001974B.pdf#G3.1205680) - or using an [online calculator like this one](https://eleccelerator.com/fusecalc/fusecalc.php?chip=ATmega8a). 
 
 Confusingly to software folks like me, 'fuses' are counted as 'active' if their bits are set to `0` and 'not active' if their bits are set to `1`. This confounds me _all the time_ 🫤.
 
@@ -138,7 +145,7 @@ board_fuses.hfuse = 0xD1
 ; This configures the _software_ to assume a 12.8 MHz clock - it does not affect
 ; the chip itself.
 ; We configure the chip with fuses, above, to use the built-in 8MHz internal 
-; oscilator. We'll then calibrate it in software to run 'too fast' at 12.8MHz.
+; oscillator. We'll then calibrate it in software to run 'too fast' at 12.8MHz.
 board_build.f_cpu = 12800000
 
 
@@ -191,7 +198,7 @@ Selected fuses: [lfuse = 0xA4, hfuse = 0xD1]
 Setting fuses
 ```
 
-Seemingly worryingly, it says we're using the external oscialltor (`Oscillator = external`), which is incorrect. It's actually all okay though - PlatformIO is just a bit confused by our direct fuse setting - you the `Selected fuses: [lfuse = 0xA4, hfuse = 0xD1]` line shows that we have overridden things, and the correct values for what we want are indeed the ones being programmed.
+Seemingly worryingly, it says we're using the external oscillator (`Oscillator = external`), which is incorrect. It's actually all okay though - PlatformIO is just a bit confused by our direct fuse setting - the `Selected fuses: [lfuse = 0xA4, hfuse = 0xD1]` line shows that we have overridden things, and the correct values for what we want are indeed the ones being programmed.
 
 
 ## Checking our work
@@ -237,7 +244,7 @@ We're already using 9.8% of the program space! Let's keep an eye on that as we g
 
 Program ready - let's get it onto the chip! I hit 'Upload' (it's the left-facing-arrow icon in the bottom status bar, or 'Project Tasks -> Default -> General -> Upload' in the PlatformIO sidebar). PlatformIO will build the project again if necessary, and upload it.
 
-![An Arduino with an ArduinoISP shield with an ATMega8A in the socket. The 'PROG' LED on the shield is flashing](Programming.mp4g)
+{{< video src="Programming" >}}
 
 Next, I removed the chip from the programmer and put it in a breadboard. I wired a 5V supply to pins 7 and 20, and ground to pins 8 and 22, then added a resistor (can't remember what I used - about 220Ω probably) and an LED to blink. 
 
@@ -247,17 +254,17 @@ I've also added a 10K resistor to pull the reset pin up, and a couple of 0.1uF d
 
 Power it on, and, woo! Blinking!
 
-![A breadboard with an ATMega8, two decoupling capacitors, and an LED blinking at about 1.5s on, 1.5s off](BlinkingLED.mp4g)
+{{< video src="BlinkingLED" >}}
 
 But - wait - why's it going so slowly? We coded a one second blink rate - the code has a 1000ms delay between each toggle! 
 
-Remember that we set the fuses to run the internal oscillator at 8MHz - but we told the _complier_ that we're running it at 12.8MHz! At 12.8MHz, one second is 12800000 cycles, so that's what it used. Because we're _actually_ running the chip at 8MHz. At 8MHz there are only 8000000 per second, so 12800000 cycles lasts for 12800000 / 8000000 = 1.6 seconds. So, everything is actually working perfectly! 
+Remember that we set the fuses to run the internal oscillator at 8MHz - but we told the _complier_ that we're running it at 12.8MHz! At 12.8MHz, one second is 12800000 cycles, so that's what it used. But we're _actually_ running the chip at 8MHz. At 8MHz there are only 8000000 per second, so 12800000 cycles lasts for 12800000 / 8000000 = 1.6 seconds. So, everything is actually working perfectly! 
 
 Again, we'll deal with making the chip _actually_ run at 12800000MHz a bit later (the anticipation!)
 
 So - a blinking LED. I feel like that's the traditional place to stop the first post in a series like this?
 
-There's not much to it yet, but you can follow along with the series in this GitHub repository: . The code there will grow as this series does - I've added a 'blog_post_1' tag will point to the code as-is for this post.
+There's not much to it yet, but you can follow along with the series in [this GitHub repository](https://github.com/th-in-gs/SwitchDualShockAdapter). The `main` branch there will grow as this series does. I've added a [`blog_post_1`](https://github.com/th-in-gs/SwitchDualShockAdapter/tree/blog_post_1)  tag that will point to the code as it was for this post if this is the future and you want to check out how it looked when this post was written.
 
 Next time we'll hopefully set up our circuit to be USB-powered, get V-USB running, get the ATmega8A running at 12.8MHz  - and maybe even get ourselves talking some USB.
 
@@ -265,9 +272,9 @@ See you then!
 
 [^foreshadowing]: I _have_ done enough research that I believe it _is_ possible for a home-brew low-speed USB device to emulate a Switch Pro Controller and control a real Switch. I'll be talking more about that when we get there in the project.
 
-[^controllers]: One of my low-key annoyances with the modern world is that game controllers, which have _essentially_ been the same since the Sony introduced the Playstation [Dual Analog Controller](https://en.wikipedia.org/wiki/Dual_Analog_Controller) - or arguably the [Dual Shock](https://en.wikipedia.org/wiki/DualShock) (which was the same, but with vibration) - in 1997, are all incompatible with each other. There is a [whole](https://www.google.com/search?q=Logitech+F310&tbm=isch) [world](https://www.google.com/search?q=Macally+iShock+gamepad&tbm=isch) of [unique](https://www.google.com/search?q=Gravis+Eliminator+Aftershock&tbm=isch), [crazy](https://www.google.com/search?q=Microsoft+Sidewinder+Dual+Strike&tbm=isch) [game](https://www.google.com/search?q=Logitech+Wingman+Rumblepad&tbm=isch) [controllers](https://www.google.com/search?q=MadCatz+Lynx3&tbm=isch) [out](https://www.google.com/search?q=thrustmaster+eswap&tbm=isch) [there](https://www.google.com/search?q=SteelSeries+3GC&tbm=isch), almost all of which boil down to eight buttons (usually a d-pad and four face buttons), four sholder buttons/triggers, two analog sticks and two smaller face buttons (clasically, _Start_ and _Select_). Maybe the shoulder buttons are analog (and despite Sony's 2000s aspirations the face buttons are not). Wouldn't it be great if they were all compatible and you could choose from any of them to suit your unique hands or playstyle? And it just seems so wasteful to keep making new ones... 
+[^controllers]: One of my low-key annoyances with the modern world is that game controllers, which have _essentially_ been the same since the Sony introduced the Playstation [Dual Analog Controller](https://en.wikipedia.org/wiki/Dual_Analog_Controller) (or arguably the [Dual Shock](https://en.wikipedia.org/wiki/DualShock), which was the same but with vibration) in 1997, are all incompatible with each other. There is a [whole](https://www.google.com/search?q=Logitech+F310&tbm=isch) [world](https://www.google.com/search?q=Macally+iShock+gamepad&tbm=isch) of [unique](https://www.google.com/search?q=Gravis+Eliminator+Aftershock&tbm=isch), [sometimes wild](https://www.google.com/search?q=Microsoft+Sidewinder+Dual+Strike&tbm=isch) [game](https://www.google.com/search?q=Logitech+Wingman+Rumblepad&tbm=isch) [controllers](https://www.google.com/search?q=MadCatz+Lynx3&tbm=isch) [out](https://www.google.com/search?q=thrustmaster+eswap&tbm=isch) [there](https://www.google.com/search?q=SteelSeries+3GC&tbm=isch), almost all of which boil down to eight buttons (usually a d-pad and four face buttons), four shoulder buttons/triggers, two analog sticks and two smaller face buttons (classically, _Start_ and _Select_). Maybe the shoulder buttons are analog (and, despite Sony's 2000s aspirations, the face buttons are not). Wouldn't it be great if they were all compatible and you could choose from any of them to suit your unique hands or playstyle? And it just seems so wasteful to keep making new ones... 
 
-To be honest, I'd kind of assumed they _were_ all compatible. I got into gaming again in the pandemic, and played all of Tomb Raider 2013 on Stadia on my Mac with my trusty twenty year old Dual Shock and a [twenty year old PlayStation to USB adapter](https://www.google.com/search?q=xk-pc2004&tbm=isch). I assumed all USB controllers nowadays were just USB HID devices, and would work anywhere, like keyboards and mice - but, no. And worse than that, Microsoft and Sony actually have cryptographic authentication built into the Xbox and Playstation that restricts them to working only with officially licensed controllers! Nintendo doesn't do the authentication thing with the Switch, at least (though the Switch still doesn't 'just work' with standard USB controllers).
+	To be honest, I'd kind of assumed they _were_ all compatible. I got into gaming again in the pandemic, and played all of Tomb Raider 2013 on Stadia on my Mac with my trusty twenty year old Dual Shock and a [twenty year old PlayStation to USB adapter](https://www.google.com/search?q=xk-pc2004&tbm=isch). I assumed all USB controllers nowadays were just USB HID devices, and would work anywhere - like keyboards and mice. But, no. And worse than that, Microsoft and Sony actually have cryptographic authentication built into the Xbox and Playstation that restricts them to working only with officially licensed controllers! Nintendo doesn't do the authentication thing with the Switch, at least (though the Switch still doesn't 'just work' with standard USB controllers).
 
 [^firmware]: Firmware? The distinction between what 'software' and 'firmware' is is fuzzy at this level of the stack!
 
