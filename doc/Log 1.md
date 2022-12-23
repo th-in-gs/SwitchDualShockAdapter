@@ -46,7 +46,7 @@ If this works on an ATmega8A, really any ATmega*X*8 or ATmega*XX*8 chip with at 
 
 I said this was a quixotic choice. You might assume that the small amount of program space and relatively slow processor will be problematic - or that it won't be easy to get going writing a USB accessory with an old microcontroller running a USB stack in software. I think that will not be the case, however! We'll find out if I'm right as the project progresses.
 
-I'll be programming on my Mac using [Visual Studio Code](https://code.visualstudio.com) (the first time I've really used is in earnest), with [PlatformIO](https://platformio.org/platformio-ide) to manage the project and compiler toolchain and generally do the heavy lifting. PlatformIO is an _amazing_ development environment for almost every microcontroller you could imagine. The [PlatformIO](https://platformio.org/platformio-ide) web site has full installation instructions, including how to get and install VSCode.
+I'll be programming on my Mac using [Visual Studio Code](https://code.visualstudio.com) (the first time I've really used it in earnest), with [PlatformIO](https://platformio.org/platformio-ide) to manage the project and compiler toolchain and generally do the heavy lifting. PlatformIO is an _amazing_ development environment for almost every microcontroller you could imagine. The [PlatformIO](https://platformio.org/platformio-ide) web site has full installation instructions, including how to get and install VSCode.
 
 
 ## Setting up the development environment
@@ -87,11 +87,11 @@ What's a programmer? I use an Arduino running the "ArduinoISP" ('In-System Progr
 
 ![An Arduino with an Evil Mad Science ISP shield attached, and an ATmega8A in the socket.](ArduinoISP.jpeg)
 
-An "ArduinoISP" sketch comes as an example in the Arduino IDE - you just load it onto an Arduino in the usual manner, attach the shield, and, boom, you've got yourself a ATMega programmer. Attach it to a computer with USB, put the ATmega chip you want to program in the socket, and you can write your program onto to the chip. 
+An "ArduinoISP" sketch comes as an example in the Arduino IDE - you just load it onto an Arduino in the usual manner, attach the shield, and, boom, you've got yourself a ATmega programmer. Attach it to a computer with USB, put the ATmega chip you want to program in the socket, and you can write your program onto to the chip. 
 
 Instead of this setup, if we were going for more extreme minimalism, we could also set up [an Arduino, a breadboard, and a small mess of jumper wires](https://docs.arduino.cc/built-in-examples/arduino-isp/ArduinoToBreadboard)[^ArduinoISP] to be a programmer. At the other end of the scale there are standalone programmers of [variable](https://www.amazon.com/dp/B0973X6XP3/) [degrees](https://www.olimex.com/Products/AVR/Programmers/AVR-ISP-MK2/open-source-hardware) of [officialness](https://www.microchip.com/en-us/development-tool/ATAVRISP2) and [sophistication](https://www.microchip.com/en-us/development-tool/atatmel-ice). Any one would likely work. One nice thing about the Evil Mad Scientist shield in comparison to many of the others is that it has a nice [ZIF](https://en.wikipedia.org/wiki/Zero_insertion_force) socket for putting the ATmega into. With most other programmers you need to arrange to connect up a 6 or 10 pin ribbon cable to the ATmega somehow - whether that's jumper wires to a breadboard, or [something extra like this](https://www.tindie.com/products/jeffmurchison/tinyloadr-avr-breakout/). I do like [this ingenious method](https://www.tindie.com/products/ossiconelabs/isp-bridge-5atmel-attiny-x8-atmega-x8/)!
 
-Anyway, enough digression. Let's tell PlatformIO and VSCode more more how we want to set up use and program our ATmega8A.
+Anyway, enough digression. Let's tell PlatformIO and VSCode more about how we want to set up, use, and program our ATmega8A.
 
 I'd like to use the internal 8MHz oscillator to clock the ATmega. This will eliminate the need for an external [timing crystal](https://www.google.com/search?q=timing+crystal+for+ATmega8A) and associated circuitry, so it's also the minimalist's choice. It will also allow me to use the clock pins (pins 9 and 10 on the chip) as IO pins if I want to. I'm not sure if we'll actually *need* that many IO pins for this project - but it's a nice advantage to using the internal oscillator.
 
@@ -113,7 +113,7 @@ All together, this is binary `0b010100100`, or `0xA4` in hex.
 
 And for the 'high' fuse:
 
-- `RSTDISBL = 1`: Reset disable not active (so, reset pin *enabled*). We _could_ set this to 0 and get the reset pin back to use as another IO pin! But then we wouldn't be able to reprogram the chip without a expensive high voltage programming rig - so probably best not to do that...
+- `RSTDISBL = 1`: Reset disable not active (so, reset pin *enabled*). We _could_ set this to '0' and get the reset pin back to use as another IO pin! But then we wouldn't be able to reprogram the chip without a expensive high voltage programming rig - so probably best not to do that...
 - `WTDON = 1`: 'Watchdog timer' off. We may come back to this later.
 - `SPIEN = 0`: SPI programming active. We definitely don't want to switch this off because it would, again, make it impossible for us to reprogram the chip.
 - `CKOPT = 1`: "Clock Options". The data sheet tells us this bit should not be active if we're using the internal oscillator, so better do what it says.
@@ -260,7 +260,7 @@ But - wait - why's it going so slowly? We coded a one second blink rate - the co
 
 Remember that we set the fuses to run the internal oscillator at 8MHz - but we told the _complier_ that we're running it at 12.8MHz! At 12.8MHz, one second is 12800000 cycles, so that's what it used. But we're _actually_ running the chip at 8MHz. At 8MHz there are only 8000000 per second, so 12800000 cycles lasts for 12800000 / 8000000 = 1.6 seconds. So, everything is actually working perfectly! 
 
-Again, we'll deal with making the chip _actually_ run at 12800000MHz a bit later (the anticipation!)
+Again, we'll deal with making the chip _actually_ run at 12800000Hz a bit later (the anticipation!)
 
 So - a blinking LED. I feel like that's the traditional place to stop the first post in a series like this?
 
