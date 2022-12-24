@@ -3,7 +3,7 @@
 extern "C" {
     #include <usbdrv/usbdrv.h>
 
-    // We declare this to be used by V-USB's 'osccal.h' oscilator calibration 
+    // We declare this to be used by V-USB's 'osccal.h' oscillator calibration 
     // routine.
     uchar lastTimer0Value = 0;
 }
