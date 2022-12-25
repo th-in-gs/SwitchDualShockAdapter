@@ -13,7 +13,7 @@ I'm also looking forward to stretching my writing muscles documenting the projec
 
 <!--more-->
 
-I'll be writing assuming a little knowledge of C-like programming languages (like, maybe what a pointer is) and basic electronics (maybe how to hook up an LED) - but I'll try to keep a balance between being high level and approachable and getting bogged down in the details. I'm going to start with the 'setting up the development environment' and go all the way to 'using it to play games', so hopefully the first article or two will also serve to document an easy way to start writing USB peripherals with modern software and questionably suitable hardware.
+I'll try to keep a balance between being high level and approachable and getting bogged down in the details. I'm going to start with the 'setting up the development environment' (in this post) and go all the way to 'using it to play games' (in the last), so hopefully the first article or two will also serve to document an easy way to start writing USB peripherals with modern software and questionably suitable hardware.
 
 I hope it all works! If not, there might be an unexpected twist later in the series (the anticipation!)[^foreshadowing]
 
@@ -93,13 +93,13 @@ Instead of this setup, if we were going for more extreme minimalism, we could al
 
 Anyway, enough digression. Let's tell PlatformIO and VSCode more about how we want to set up, use, and program our ATmega8A.
 
-I'd like to use the internal 8MHz oscillator to clock the ATmega. This will eliminate the need for an external [timing crystal](https://www.google.com/search?q=timing+crystal+for+ATmega8A) and associated circuitry, so it's also the minimalist's choice. It will also allow me to use the clock pins (pins 9 and 10 on the chip) as IO pins if I want to. I'm not sure if we'll actually *need* that many IO pins for this project - but it's a nice advantage to using the internal oscillator.
+I'll need to set some settings on the ATMega by 'burning the fuses' on it. This isn't as hard (or irreparable) as it sounds - it just means sending two eight bit settings values to the chip that it will store and then use to set itself up when it's powered on.
 
-I'll actually be tuning the oscillator make it run at 12.8MHz (really, slightly abusing the tuning mechanism) - but more on the how-and-why of that later.
+The most important setting here is how the chip is 'clocked'. I'd like to use the internal 8MHz oscillator to clock the ATmega. This will eliminate the need for an external [timing crystal](https://www.google.com/search?q=timing+crystal+for+ATmega8A) and associated circuitry, so it's also the minimalist's choice. It will also allow me to use the clock pins (pins 9 and 10 on the chip) as IO pins if I want to. I'm not sure if we'll actually *need* that many IO pins for this project - but it's a nice advantage to using the internal oscillator. 
 
-To do all this, I'll need to set the settings on the ATMega by 'burning the fuses' on it. This isn't as hard (or irreparable) as it sounds - it just means sending two eight bit settings values to the chip that it will store and then use to set itself up when it's powered on. The two values are referred to as the "low fuse" and "high fuse" - but they're just bytes that encode our settings. 
+I'll actually be tuning the oscillator make it run at 12.8MHz instead of 8MHz (really, slightly abusing the tuning mechanism) - but more on the how-and-why of that later.
 
-These two bytes are broken up into bits or group of bits traditionally referred to with an `ALL CAPS NAME`. You learn what they mean by reading relevant parts of [the data sheet](https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega8A-Data-Sheet-DS40001974B.pdf#G3.1205680) - or using an [online calculator like this one](https://eleccelerator.com/fusecalc/fusecalc.php?chip=ATmega8a). 
+The fuse values are referred to as the "low fuse" and "high fuse" - but they're really just two bytes that encode our settings. The bytes are broken up into bits or group of bits traditionally referred to with `ALL CAPS NAME`s. You learn what they mean by reading relevant parts of [the data sheet](https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega8A-Data-Sheet-DS40001974B.pdf#G3.1205680) - or using an [online calculator like this one](https://eleccelerator.com/fusecalc/fusecalc.php?chip=ATmega8a). 
 
 Confusingly to software folks like me, 'fuses' are counted as 'active' if their bits are set to `0` and 'not active' if their bits are set to `1`. This confounds me _all the time_ 🫤.
 
