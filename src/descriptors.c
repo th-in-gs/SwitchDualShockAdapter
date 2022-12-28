@@ -151,3 +151,5 @@ PROGMEM const char usbDescriptorConfiguration[] = {
 
 static_assert(sizeof(usbDescriptorConfiguration) == USB_PROP_LENGTH(USB_CFG_DESCR_PROPS_CONFIGURATION),
     "usbHidReportDescriptor contains a different number of entries than the USB_CFG_HID_REPORT_DESCRIPTOR_LENGTH macro specifies");
+
+static_assert(sizeof(SwitchReport) == 11, "Switch report should be 10 bytes long");
