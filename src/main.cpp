@@ -15,11 +15,44 @@ extern "C" {
 
 void setup()
 {
-    pinMode(LED_BUILTIN, OUTPUT);
-    DDRC |= (1<<5 | 1<<4 | 1<<3);
-
-    // Disable interrupts for USB reset.
+    // Disable interrupts for setup.
     noInterrupts();
+    
+    // For 1Hz blinking LED.
+    DDRC |= 1<<5;
+
+    // Set SCK, COPI and ^SS to output.
+    DDRB |= 1<<5 | 1<<3 | 1<<2;
+
+    // SPIE = 0 (SPI interrupt disabled - we'll just poll)
+    // SPE  = 1 (SPI enabled)
+    // DORD = 1 (Data order: LSB of the data word is transmitted first)
+    // MSTR = 1 (Controller/Peripheral (nee Master/Slave) Select: controller mode)
+    // CPOL = 1 (Clock Polarity: Leading edge = falling)
+    // CPHA = 1 (Clock Phase: Leading edge = setup, trailing ecdge = sample)
+    // SPR1 SPR0 = 10 (fosc / 64 = 12.8MHz / 64 = 200kHz - doubled below).
+    SPCR = 0b01111110;
+    
+    // Double the SPI rate defined above (so 200kHz * 2 = 400kHz)
+    SPSR |= 1 << SPI2X;
+
+    // This will work if the line has _very low_ capacitance.
+    // Really, a 1k external pull-up is required.
+    // PORTB |= 1<<4;
+
+    // Need to set SS to high so we can pull it low for each transaction, and 
+    // COPI and CLOCK should rest at high too.
+    PORTB |= 1<<5 | 1<<3 | 1<<2;
+
+    // Pull-up on Acknowledge pin (INT1/PD3).
+    //PORTD |= 1<<3;
+
+    // Controller's 'acknowledge' pin is attached to INT1. Set up to trigger on 
+    // lowgoing transition. We won't actually have an interrupt routine defined
+    // for INT1, we'll look at GIFR | INT1 to decide whether an 'attention' has
+    // fired.
+    MCUCR |= 1 << ISC11;
+    GICR |= 1 << INT1;
 
     // Initialize V-USB.
     usbInit();
@@ -34,7 +67,7 @@ void setup()
     // Enable interrupts again.
     interrupts();
 
-   // Serial.begin(266667);
+    Serial.begin(266667);
 }
 
 static void halt(uint8_t i)
@@ -51,9 +84,113 @@ static boolean sReportPending = false;
 static boolean sInputReportsSuspended = false;
 static boolean sLedIsOn = false;
 
+static volatile bool sAcknowledgeWasSet = 0;
+ISR (INT1_vect) {
+    sAcknowledgeWasSet = true;
+    Serial.print('.');
+}
+
+static void clearAcknowledge()
+{
+    sAcknowledgeWasSet = 0;
+}
+
+static const boolean acknowledgeIsSignalled() 
+{
+    return sAcknowledgeWasSet;
+}
+
+static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTransmitLength)
+{
+    static uint8_t toReceive[21] = {0};
+    uint8_t toReceiveLen = sizeof(toReceive);
+
+    PORTB &= ~(1<<2);
+
+    delayMicroseconds(10);
+
+    uint8_t receiveCursor = 0;
+    do {
+        clearAcknowledge();
+        if(receiveCursor == 0) {
+            SPDR = 0x01;
+        } else if(receiveCursor <= toTransmitLength) {
+            SPDR = pgm_read_byte(toTransmit + (receiveCursor - 1));
+        } else {
+            SPDR = 0x00;//0x5a;
+        }
+        
+        while(!(SPSR & (1<<SPIF)));        
+        const uint8_t received = SPDR;
+
+        if(receiveCursor == 1) {
+            toReceiveLen = max(toReceiveLen, receiveCursor + ((receiveCursor && 0xf) * 2));
+        }
+        /*if(receiveCursor == 2) {
+            if(received != 0x5a) {
+                halt(0x5a);
+            }
+        }*/
+        toReceive[receiveCursor] = received;
+
+        ++receiveCursor;
+        if(receiveCursor < toReceiveLen) {
+            //while(!sAcknowledgeWasSet) {
+                //Serial.print('.');
+            //}
+            delayMicroseconds(10);
+        }
+    } while(receiveCursor < toReceiveLen);
+  
+    PORTB |= 1<<2;
+
+    return toReceive;
+}
+
+static void convertDualShockToSwitch(const DualShockReport *dualShockReport, SwitchReport *switchReport)
+{
+    memset(switchReport, 0, sizeof(SwitchReport));
+
+    switchReport->yButton = !dualShockReport->squareButton;
+    switchReport->xButton = !dualShockReport->triangleButton;
+    switchReport->bButton = !dualShockReport->crossButton;
+    switchReport->aButton = !dualShockReport->circleButton;
+    switchReport->rShoulderButton = !dualShockReport->r1Button;
+    switchReport->zRShoulderButton = !dualShockReport->r2Button;
+
+    switchReport->minusButton = !dualShockReport->selectButton;
+    switchReport->plusButton = !dualShockReport->startButton;
+    switchReport->rStickButton = !dualShockReport->r3Button;
+    switchReport->lStickButton = !dualShockReport->l3Button;
+
+    switchReport->downButton = !dualShockReport->downButton;
+    switchReport->upButton = !dualShockReport->upButton;
+    switchReport->rightButton = !dualShockReport->rightButton;
+    switchReport->leftButton = !dualShockReport->leftButton;
+    switchReport->lShoulderButton = !dualShockReport->l1Button;
+    switchReport->zLShoulderButton = !dualShockReport->l2Button;
+
+    // The Switch has 12-bit analog sticks. The Dual Shock has 8-bit.
+    // We replicate the high 4 bits into the bottom 4 bits of the 
+    // Switch report, so that e.g. 0xFF maps to 0XFFF, 0x00 maps to 0x000
+    // The mid-point of 0x80 maps to 0x808, which is a bit off - but
+    // 0x80 is in fact off too - the real midpoint of [0x00 - 0xff] is 0x7f.8
+    // (using a hexadecimal point there, like a decimal point).
+    const uint8_t leftStickX = dualShockReport->leftStickX;
+    const uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
+    switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
+    switchReport->leftStick[1] = (leftStickX >> 4) | (leftStickY & 0xf0);    
+    switchReport->leftStick[2] = leftStickY;
+
+    const uint8_t rightStickX = dualShockReport->rightStickX;
+    const uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
+    switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
+    switchReport->rightStick[1] = (rightStickX >> 4) | (rightStickY & 0xf0);    
+    switchReport->rightStick[2] = rightStickY;
+}
+
 static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer) 
 {    
-    PORTC |= 1<<3;
     static uint8_t count = 0;
     static boolean previousLedState  = sLedIsOn;
 
@@ -68,20 +205,34 @@ static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer)
         previousLedState = sLedIsOn;
     }
 
-    buffer[0] = 0x81;
-    memset(&buffer[1], 0, 10);
-    
-    // We'll alternately press the left and right dpad buttons for testing.
-    if(sLedIsOn) {
-        buffer[3] |= 0b100;
-    } else {
-        buffer[3] |= 0b1000;
+    static const PROGMEM uint8_t toTransmit[] = { 0x42 };
+    const uint8_t *received = sampleDualShock_P(toTransmit, 1);
+
+    if((count % 20) == 0) {
+        lcd.print('\n');
+        lcd.print(received[0], 16);
+        lcd.print(' ');
+        lcd.print(received[1], 16);
+        lcd.print(' ');
+        lcd.print(received[2], 16);
+        lcd.print(' ');
+        lcd.print(received[3], 2);
+        lcd.print(' ');
+        lcd.print(received[4], 2);
+        lcd.print(' ');
+        lcd.print(received[5], 2);
+        lcd.print('\n');
     }
+
+    SwitchReport * report = (SwitchReport *)buffer;
+    convertDualShockToSwitch((const DualShockReport *)received, (SwitchReport *)buffer);
+
+    report->connectionInfo = 0x1;
+    report->batteryLevel = 0x8;
 
     ++count;
 
-    PORTC &= ~(1<<3);
-    return 11;
+    return sizeof(SwitchReport);
 }
 
 static void prepareInputReport()
@@ -427,9 +578,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
 
 static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const boolean stall)
 {
-    PORTC |= 1 << 4;
     usbFunctionWriteOutOrStall_inner(data, len, stall);
-    PORTC &= ~(1 << 4);
 }
 
 void usbFunctionWriteOut(uchar *data, uchar len)
@@ -496,8 +645,6 @@ usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
 
 static void sendReportBlocking()
 {
-PORTC |= 1<<5;
-
     const uint8_t reportIndex = sCurrentReport;
 
     // Toggle the current report.
@@ -518,8 +665,6 @@ PORTC |= 1<<5;
         usbSetInterrupt(&report[reportCursor], bytesToSend);
         reportCursor += bytesToSend;
     } while(reportCursor < reportSize);    
-
-PORTC &= ~(1<<5); 
 }
 
 // Call regularly to blink the LED every 1 second.
@@ -531,12 +676,141 @@ static void ledHeartbeat()
     if(timeNow - lastBeat >= 1000) {
         lastBeat += 1000;
         sLedIsOn = !sLedIsOn;
-        digitalWrite(LED_BUILTIN, sLedIsOn);
+        if(sLedIsOn) {
+            PORTC |= 1 << 5;
+        } else {
+            PORTC &= ~(1 << 5);
+        }
     }
 }
 
 void loop()
 {
+    static uint32_t count = 0;
+/*
+    delayMicroseconds(50);
+    delay(10000);
+
+    {
+        const uint8_t toTransmit[] = { 0x43, 0, 1 };
+        const uint8_t *received = sampleDualShock(toTransmit, 3);
+        lcd.print('\n');
+        lcd.print(received[0], 16);
+        lcd.print(' ');
+        lcd.print(received[1], 16);
+        lcd.print(' ');
+        lcd.print(received[2], 16);
+        lcd.print(' ');
+        lcd.print(received[3], 2);
+        lcd.print(' ');
+        lcd.print(received[4], 2);
+        lcd.print(' ');
+        lcd.print(received[5], 2);
+        lcd.print('\n');
+        delayMicroseconds(50);
+    }
+
+    {
+        const uint8_t toTransmit[] = { 0x41 };
+        const uint8_t *received = sampleDualShock(toTransmit, 1);
+        lcd.print('\n');
+        lcd.print(received[0], 16);
+        lcd.print(' ');
+        lcd.print(received[1], 16);
+        lcd.print(' ');
+        lcd.print(received[2], 16);
+        lcd.print(' ');
+        lcd.print(received[3], 2);
+        lcd.print(' ');
+        lcd.print(received[4], 2);
+        lcd.print(' ');
+        lcd.print(received[5], 2);
+        lcd.print('\n');
+        delayMicroseconds(50);
+    }
+
+    {
+        const uint8_t toTransmit[] = { 0x44, 0, 1, 3};
+        const uint8_t *received = sampleDualShock(toTransmit, 4);
+        lcd.print('\n');
+        lcd.print(received[0], 16);
+        lcd.print(' ');
+        lcd.print(received[1], 16);
+        lcd.print(' ');
+        lcd.print(received[2], 16);
+        lcd.print(' ');
+        lcd.print(received[3], 2);
+        lcd.print(' ');
+        lcd.print(received[4], 2);
+        lcd.print(' ');
+        lcd.print(received[5], 2);
+        lcd.print('\n');
+        delayMicroseconds(50);
+    }
+
+    {
+        const uint8_t toTransmit[] = { 0x45 };
+        const uint8_t *received = sampleDualShock(toTransmit, 1);
+        lcd.print('\n');
+        lcd.print(received[0], 16);
+        lcd.print(' ');
+        lcd.print(received[1], 16);
+        lcd.print(' ');
+        lcd.print(received[2], 16);
+        lcd.print(' ');
+        lcd.print(received[3], 2);
+        lcd.print(' ');
+        lcd.print(received[4], 2);
+        lcd.print(' ');
+        lcd.print(received[5], 2);
+        lcd.print('\n');
+        delayMicroseconds(50);
+    }
+
+    {
+        const uint8_t toTransmit[] = { 0x43, 0, 0 };
+        const uint8_t *received = sampleDualShock(toTransmit, 3);
+        lcd.print('\n');
+        lcd.print(received[0], 16);
+        lcd.print(' ');
+        lcd.print(received[1], 16);
+        lcd.print(' ');
+        lcd.print(received[2], 16);
+        lcd.print(' ');
+        lcd.print(received[3], 2);
+        lcd.print(' ');
+        lcd.print(received[4], 2);
+        lcd.print(' ');
+        lcd.print(received[5], 2);
+        lcd.print('\n');
+        delayMicroseconds(50);
+    }
+
+    while(1) {
+        delayMicroseconds(50);
+
+        const uint8_t toTransmit[] = { 0x42 };
+        const uint8_t *received = sampleDualShock(toTransmit, 1);
+
+        if((count % 100) == 0) {
+            lcd.print('\n');
+            lcd.print(received[0], 16);
+            lcd.print(' ');
+            lcd.print(received[1], 16);
+            lcd.print(' ');
+            lcd.print(received[2], 16);
+            lcd.print(' ');
+            lcd.print(received[3], 2);
+            lcd.print(' ');
+            lcd.print(received[4], 2);
+            lcd.print(' ');
+            lcd.print(received[5], 2);
+            lcd.print('\n');
+        }
+        ++count;
+    }
+    return;
+*/
     ledHeartbeat();
     usbPoll();
 

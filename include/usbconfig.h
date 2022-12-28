@@ -33,7 +33,7 @@ section at the end of this file).
 /* This is the bit number in USB_CFG_IOPORT where the USB D- line is connected.
  * This may be any bit in the port.
  */
-#define USB_CFG_DPLUS_BIT       3
+#define USB_CFG_DPLUS_BIT       4
 /* This is the bit number in USB_CFG_IOPORT where the USB D+ line is connected.
  * This may be any bit in the port. Please note that D+ must also be connected
  * to interrupt pin INT0! [You can also use other interrupts, see section
@@ -156,7 +156,7 @@ section at the end of this file).
  * for long transfers increases the driver size.
  */
 
-#define USB_RX_USER_HOOK(data, len)    { (void(*)(const uchar *data, const uchar len))usbFunctionRxHook(data, len); }
+#define USB_RX_USER_HOOK(data, len)    { void usbFunctionRxHook(const unsigned char *data, const unsigned char len); usbFunctionRxHook(data, len); }
 /* This macro is a hook if you want to do unconventional things. If it is
  * defined, it's inserted at the beginning of received message processing.
  * If you eat the received message and don't want default processing to
