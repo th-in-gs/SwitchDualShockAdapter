@@ -17,11 +17,16 @@ void setup()
 {
     // Disable interrupts for setup.
     noInterrupts();
-    
+
+    // 'Good' value on the ATMega8A I've been testing with.
+    // the 'ossccal.h' routinew will tune this, and work fine even if we don't
+    // set a default, but this helps the tuning take a little less time.
+    OSCCAL = 0xf2;
+
     // For 1Hz blinking LED.
     DDRC |= 1<<5;
 
-    // Set SCK, COPI and ^SS to output.
+    // Set SCK, PICO and ^CS to output.
     DDRB |= 1<<5 | 1<<3 | 1<<2;
 
     // SPIE = 0 (SPI interrupt disabled - we'll just poll)
@@ -36,16 +41,19 @@ void setup()
     // Double the SPI rate defined above (so 200kHz * 2 = 400kHz)
     SPSR |= 1 << SPI2X;
 
-    // This will work if the line has _very low_ capacitance.
+    // Pull-up for POCI.
+    // Maybe this will sometimes work, bit it's not good enough for me in testing.
     // Really, a 1k external pull-up is required.
-    // PORTB |= 1<<4;
+    PORTB |= 1<<4;
 
-    // Need to set SS to high so we can pull it low for each transaction, and 
-    // COPI and CLOCK should rest at high too.
+    // Need to set CS to high so we can pull it low for each transaction, and 
+    // PICO and CLOCK should rest at high too.
     PORTB |= 1<<5 | 1<<3 | 1<<2;
 
+
+#if 0
     // Pull-up on Acknowledge pin (INT1/PD3).
-    //PORTD |= 1<<3;
+    PORTD |= 1<<3;
 
     // Controller's 'acknowledge' pin is attached to INT1. Set up to trigger on 
     // lowgoing transition. We won't actually have an interrupt routine defined
@@ -53,6 +61,7 @@ void setup()
     // fired.
     MCUCR |= 1 << ISC11;
     GICR |= 1 << INT1;
+#endif
 
     // Initialize V-USB.
     usbInit();
@@ -105,6 +114,7 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
     static uint8_t toReceive[21] = {0};
     uint8_t toReceiveLen = sizeof(toReceive);
 
+    // Pull-down the 'Attention' line.
     PORTB &= ~(1<<2);
 
     delayMicroseconds(10);
@@ -142,6 +152,7 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
         }
     } while(receiveCursor < toReceiveLen);
   
+    // 'Attention' line needs to be raised between each transaction.
     PORTB |= 1<<2;
 
     return toReceive;
@@ -588,30 +599,22 @@ void usbFunctionWriteOut(uchar *data, uchar len)
 
 void usbFunctionRxHook(const uchar *data, const uchar len)
 {
-#if 0
-    if(usbRxToken == 0b00101101 && data[0] == 2 && data[1] == 1 ) {
-        // This is an ENDPOINT_HALT for OUT endpoint 1 (i.e. the one to us from
-        // the host). 
-        // We mneed to abandon any in-progress report reception - we won't get
-        // the rest of the report.
-        lcd.print("\n!!H!!\n");
-        usbFunctionWriteOutOrStall(data, len, true);
-    }
-#else
+    const usbRequest_t *request = (const usbRequest_t *)data;
     if(usbRxToken == USBPID_SETUP) {
         const usbRequest_t *request = (const usbRequest_t *)data;
         if((request->bmRequestType & USBRQ_RCPT_MASK) == USBRQ_RCPT_ENDPOINT && 
-           request->bRequest == USBRQ_CLEAR_FEATURE
+            request->bRequest == USBRQ_CLEAR_FEATURE
             /* && request->wIndex.bytes[0] == 1*/) {
             // This is an clear of ENDPOINT_HALT for OUT endpoint 1
             // (i.e. the one to us from the host).
             // We need to abandon any old in-progress report reception - we
             // won't get the rest of the report from before the stall.
-            lcd.print("\n!HALT\n");
+            lcd.print("\n!Clear HALT ");
+            lcd.print(request->wIndex.bytes[0], 16);
+            lcd.print("!\n");
             usbFunctionWriteOutOrStall(data, len, true);
         }
     }
-#endif
 } 
 
 usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
@@ -686,133 +689,12 @@ static void ledHeartbeat()
 
 void loop()
 {
-    static uint32_t count = 0;
-/*
-    delayMicroseconds(50);
-    delay(10000);
-
-    {
-        const uint8_t toTransmit[] = { 0x43, 0, 1 };
-        const uint8_t *received = sampleDualShock(toTransmit, 3);
-        lcd.print('\n');
-        lcd.print(received[0], 16);
-        lcd.print(' ');
-        lcd.print(received[1], 16);
-        lcd.print(' ');
-        lcd.print(received[2], 16);
-        lcd.print(' ');
-        lcd.print(received[3], 2);
-        lcd.print(' ');
-        lcd.print(received[4], 2);
-        lcd.print(' ');
-        lcd.print(received[5], 2);
-        lcd.print('\n');
-        delayMicroseconds(50);
-    }
-
-    {
-        const uint8_t toTransmit[] = { 0x41 };
-        const uint8_t *received = sampleDualShock(toTransmit, 1);
-        lcd.print('\n');
-        lcd.print(received[0], 16);
-        lcd.print(' ');
-        lcd.print(received[1], 16);
-        lcd.print(' ');
-        lcd.print(received[2], 16);
-        lcd.print(' ');
-        lcd.print(received[3], 2);
-        lcd.print(' ');
-        lcd.print(received[4], 2);
-        lcd.print(' ');
-        lcd.print(received[5], 2);
-        lcd.print('\n');
-        delayMicroseconds(50);
-    }
-
-    {
-        const uint8_t toTransmit[] = { 0x44, 0, 1, 3};
-        const uint8_t *received = sampleDualShock(toTransmit, 4);
-        lcd.print('\n');
-        lcd.print(received[0], 16);
-        lcd.print(' ');
-        lcd.print(received[1], 16);
-        lcd.print(' ');
-        lcd.print(received[2], 16);
-        lcd.print(' ');
-        lcd.print(received[3], 2);
-        lcd.print(' ');
-        lcd.print(received[4], 2);
-        lcd.print(' ');
-        lcd.print(received[5], 2);
-        lcd.print('\n');
-        delayMicroseconds(50);
-    }
-
-    {
-        const uint8_t toTransmit[] = { 0x45 };
-        const uint8_t *received = sampleDualShock(toTransmit, 1);
-        lcd.print('\n');
-        lcd.print(received[0], 16);
-        lcd.print(' ');
-        lcd.print(received[1], 16);
-        lcd.print(' ');
-        lcd.print(received[2], 16);
-        lcd.print(' ');
-        lcd.print(received[3], 2);
-        lcd.print(' ');
-        lcd.print(received[4], 2);
-        lcd.print(' ');
-        lcd.print(received[5], 2);
-        lcd.print('\n');
-        delayMicroseconds(50);
-    }
-
-    {
-        const uint8_t toTransmit[] = { 0x43, 0, 0 };
-        const uint8_t *received = sampleDualShock(toTransmit, 3);
-        lcd.print('\n');
-        lcd.print(received[0], 16);
-        lcd.print(' ');
-        lcd.print(received[1], 16);
-        lcd.print(' ');
-        lcd.print(received[2], 16);
-        lcd.print(' ');
-        lcd.print(received[3], 2);
-        lcd.print(' ');
-        lcd.print(received[4], 2);
-        lcd.print(' ');
-        lcd.print(received[5], 2);
-        lcd.print('\n');
-        delayMicroseconds(50);
-    }
-
-    while(1) {
-        delayMicroseconds(50);
-
-        const uint8_t toTransmit[] = { 0x42 };
-        const uint8_t *received = sampleDualShock(toTransmit, 1);
-
-        if((count % 100) == 0) {
-            lcd.print('\n');
-            lcd.print(received[0], 16);
-            lcd.print(' ');
-            lcd.print(received[1], 16);
-            lcd.print(' ');
-            lcd.print(received[2], 16);
-            lcd.print(' ');
-            lcd.print(received[3], 2);
-            lcd.print(' ');
-            lcd.print(received[4], 2);
-            lcd.print(' ');
-            lcd.print(received[5], 2);
-            lcd.print('\n');
-        }
-        ++count;
-    }
-    return;
-*/
     ledHeartbeat();
     usbPoll();
+
+    static uint8_t lastSendSofCount = 0;
+    static uint8_t warnedAboutSendStall = false;
+    
 
     static uchar lastAddress = 0;
     if(lastAddress != usbDeviceAddr) {
@@ -820,14 +702,28 @@ void loop()
         lcd.print("\r\n\nController Online - USB Address:");
         lcd.print(lastAddress, 16);
         lcd.print("\r\n\n");
+        
+        lastSendSofCount = usbSofCount;
+        warnedAboutSendStall = false;
     }
 
-    if(usbDeviceAddr != 0 && usbInterruptIsReady()) {
-        if(sReportPending) {
-            sendReportBlocking();
-        } else if(!sInputReportsSuspended) {
-            prepareInputReport();
-            sendReportBlocking();
+    if(usbDeviceAddr != 0) {
+        if(usbInterruptIsReady()) {
+            if(warnedAboutSendStall) {
+                lcd.print("\n\nWARNING: block removed - reports continuing\n\n");
+                warnedAboutSendStall = false;
+            }
+            lastSendSofCount = usbSofCount;
+
+            if(sReportPending) {
+                sendReportBlocking();
+            } else if(!sInputReportsSuspended) {
+                prepareInputReport();
+                sendReportBlocking();
+            }
+        } else if(!warnedAboutSendStall && (usbSofCount - lastSendSofCount) > 100) {
+            lcd.print("\n\nWARNING: reports blocked for over 100ms\n\n");
+            warnedAboutSendStall = true;
         }
     }
 }
