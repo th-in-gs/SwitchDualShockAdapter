@@ -47,6 +47,62 @@ usbMsgPtr_t         usbMsgPtr;      /* data to transmit next -- ROM or RAM addre
 static usbMsgLen_t  usbMsgLen = USB_NO_MSG; /* remaining number of bytes */
 uchar               usbMsgFlags;    /* flag values see USB_FLG_* */
 
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+#if USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH == 0
+#undef USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH
+#define USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH 8
+#endif
+typedef struct usbMsgQueueEntry_t{
+    usbMsgPtr_t ptr;
+    usbMsgLen_t len;
+    uchar flags;
+}usbMsgQueueEntry_t;
+static usbMsgQueueEntry_t  usbMsgQueue[USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH];
+static uchar               usbMsgQueuePastEndCursor = 0;
+static uchar               usbMsgQueueStartCursor = 0;
+static void usbMsgQueueEnqueueIfNecessary()
+{
+    /* Note that there is no accounting for overflow in these routines! 
+     * The queue must be large enough that it never overflows or we'll start
+     * skipping replies _and_ sending the ones we don't skip out of order.
+     */
+    if(usbMsgLen != USB_NO_MSG){
+        usbMsgQueue[usbMsgQueuePastEndCursor].len = usbMsgLen;
+        usbMsgQueue[usbMsgQueuePastEndCursor].ptr = usbMsgPtr;
+        usbMsgQueue[usbMsgQueuePastEndCursor].flags = usbMsgFlags;
+
+
+        DBG2(0xfd, &usbMsgQueuePastEndCursor, 1);
+        DBG2(0xfd, &usbMsgQueue[usbMsgQueuePastEndCursor], sizeof(usbMsgQueueEntry_t));
+        
+        usbMsgQueuePastEndCursor = (usbMsgQueuePastEndCursor + 1) % USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH;
+        usbMsgQueue[usbMsgQueuePastEndCursor].len = USB_NO_MSG;
+        usbMsgLen = USB_NO_MSG;
+    }
+}
+static uchar usbMsgQueueIncrementIfNecessary()
+{
+    /* If there is no current message... */
+    if(usbMsgQueue[usbMsgQueueStartCursor].len == USB_NO_MSG){
+        /* ...and the queue is not empty */
+        if(usbMsgQueueStartCursor != usbMsgQueuePastEndCursor){
+           usbMsgQueueStartCursor = (usbMsgQueueStartCursor + 1) % USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH;
+            DBG2(0xfe, &usbMsgQueueStartCursor, 1);
+            DBG2(0xfe, &usbMsgQueue[usbMsgQueueStartCursor], sizeof(usbMsgQueueEntry_t));
+        }
+        return 1;
+    }
+    return 0;
+}
+static void usbResetMessageQueue()
+{
+    usbTxBuf[0] = USBPID_DATA0;
+    usbMsgQueuePastEndCursor = usbMsgQueueStartCursor;
+    usbMsgQueue[usbMsgQueuePastEndCursor].len = USB_NO_MSG;
+    DBG2(0xfc, &usbMsgQueueStartCursor, 1);
+}
+#endif
+
 #define USB_FLG_USE_USER_RW     (1<<7)
 
 /*
@@ -112,7 +168,7 @@ PROGMEM const char usbDescriptorDevice[] = {    /* USB device descriptor */
     USB_CFG_DEVICE_CLASS,
     USB_CFG_DEVICE_SUBCLASS,
     0,                      /* protocol */
-    8,                      /* max packet size */
+    64,                      /* max packet size */
     /* the following two casts affect the first byte of the constant only, but
      * that's sufficient to avoid a warning with the default values.
      */
@@ -445,8 +501,10 @@ usbRequest_t    *rq = (void *)data;
         if(len != 8)    /* Setup size must be always 8 bytes. Ignore otherwise. */
             return;
         usbMsgLen_t replyLen;
+#if !USB_CFG_QUEUE_CONTROL_REPLIES
         usbTxBuf[0] = USBPID_DATA0;         /* initialize data toggling */
         usbTxLen = USBPID_NAK;              /* abort pending transmit */
+#endif    
         usbMsgFlags = 0;
         uchar type = rq->bmRequestType & USBRQ_TYPE_MASK;
         if(type != USBRQ_TYPE_STANDARD){    /* standard requests are handled by driver */
@@ -497,16 +555,23 @@ usbRequest_t    *rq = (void *)data;
 static uchar usbDeviceRead(uchar *data, uchar len)
 {
     if(len > 0){    /* don't bother app with 0 sized reads */
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+        usbMsgPtr_t r = usbMsgQueue[usbMsgQueueStartCursor].ptr;
+        uchar f = usbMsgQueue[usbMsgQueueStartCursor].flags;
+#else
+        usbMsgPtr_t r = usbMsgPtr;
+        uchar f = usbMsgFlags;
+#endif
+
 #if USB_CFG_IMPLEMENT_FN_READ
-        if(usbMsgFlags & USB_FLG_USE_USER_RW){
+        if(f & USB_FLG_USE_USER_RW) {
             len = usbFunctionRead(data, len);
         }else
 #endif
         {
             uchar i = len;
-            usbMsgPtr_t r = usbMsgPtr;
-            if(usbMsgFlags & USB_FLG_MSGPTR_IS_ROM){    /* ROM data */
-                do{
+            if(f & USB_FLG_MSGPTR_IS_ROM){    /* ROM data */
+                do {
                     uchar c = USB_READ_FLASH(r);    /* assign to char size variable to enforce byte ops */
                     *data++ = c;
                     r++;
@@ -517,7 +582,11 @@ static uchar usbDeviceRead(uchar *data, uchar len)
                     r++;
                 }while(--i);
             }
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+            usbMsgQueue[usbMsgQueueStartCursor].ptr = r;
+#else
             usbMsgPtr = r;
+#endif
         }
     }
     return len;
@@ -533,20 +602,38 @@ static inline void usbBuildTxBlock(void)
 usbMsgLen_t wantLen;
 uchar       len;
 
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+    wantLen = usbMsgQueue[usbMsgQueueStartCursor].len;
+#else
     wantLen = usbMsgLen;
-    if(wantLen > 8)
+#endif
+    if(wantLen > 8) 
         wantLen = 8;
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+    usbMsgQueue[usbMsgQueueStartCursor].len -= wantLen;
+#else
     usbMsgLen -= wantLen;
+#endif
+
     usbTxBuf[0] ^= USBPID_DATA0 ^ USBPID_DATA1; /* DATA toggling */
     len = usbDeviceRead(usbTxBuf + 1, wantLen);
     if(len <= 8){           /* valid data packet */
         usbCrc16Append(&usbTxBuf[1], len);
         len += 4;           /* length including sync byte */
-        if(len < 12)        /* a partial package identifies end of message */
+        if(len < 12){       /* a partial package identifies end of message */
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+            usbMsgQueue[usbMsgQueueStartCursor].len = USB_NO_MSG;
+#else
             usbMsgLen = USB_NO_MSG;
+#endif
+        }
     }else{
         len = USBPID_STALL;   /* stall the endpoint */
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+        usbMsgQueue[usbMsgQueueStartCursor].len = USB_NO_MSG;
+#else
         usbMsgLen = USB_NO_MSG;
+#endif
     }
     usbTxLen = len;
     DBG2(0x20, usbTxBuf, len-1);
@@ -591,11 +678,25 @@ uchar   i;
 #else
         usbRxLen = 0;       /* mark rx buffer as available */
 #endif
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+        usbMsgQueueEnqueueIfNecessary();
+#endif
     }
     if(usbTxLen & 0x10){    /* transmit system idle */
-        if(usbMsgLen != USB_NO_MSG){    /* transmit data pending? */
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+        if(usbMsgQueueIncrementIfNecessary()) {
+            usbTxBuf[0] = USBPID_DATA0;
+        }
+        uchar msgLen = usbMsgQueue[usbMsgQueueStartCursor].len;
+#else
+        uchar msgLen = usbMsgLen;
+#endif
+        if(msgLen != USB_NO_MSG){    /* transmit data pending? */
             usbBuildTxBlock();
         }
+    }else{
+        uchar chars[3] = { usbTxLen, usbRxLen, usbSofCount };
+        //DBG1(0xEd, chars, 3);
     }
     for(i = 20; i > 0; i--){
         uchar usbLineStatus = USBIN & USBMASK;
@@ -606,6 +707,9 @@ uchar   i;
     usbNewDeviceAddr = 0;
     usbDeviceAddr = 0;
     usbResetStall();
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+    usbResetMessageQueue();
+#endif
     DBG1(0xff, 0, 0);
 isNotReset:
     usbHandleResetHook(i);
@@ -628,6 +732,9 @@ USB_PUBLIC void usbInit(void)
 #if USB_CFG_HAVE_INTRIN_ENDPOINT3
     usbTxLen3 = USBPID_NAK;
 #endif
+#endif
+#if USB_CFG_QUEUE_CONTROL_REPLIES
+    usbResetMessageQueue();
 #endif
 }
 
