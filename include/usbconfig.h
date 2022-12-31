@@ -341,6 +341,9 @@ section at the end of this file).
  * };
  */
 
+#define USB_CFG_QUEUE_CONTROL_REPLIES               0
+#define USB_CFG_CONTROL_REPLIES_QUEUE_LENGTH        8
+
 #define USB_CFG_DESCR_PROPS_DEVICE                  0
 #define USB_CFG_DESCR_PROPS_CONFIGURATION           USB_PROP_LENGTH(9 + 9 + 9 + 7 + 7)
 #define USB_CFG_DESCR_PROPS_STRINGS                 0
