@@ -526,6 +526,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
         case 0x04: // Trigger buttons elapsed time (?)
         case 0x08: // Set shipment low power state
         case 0x21: // Set NFC/IR MCU configuration
+        case 0x22: // Set NFC/IR MCU state
         case 0x30: // Set player lights
         case 0x38: // Set HOME light
         case 0x40: // Set IMU enabled state
