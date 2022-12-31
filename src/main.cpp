@@ -142,7 +142,7 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
         const uint8_t received = SPDR;
 
         if(receiveCursor == 1) {
-            toReceiveLen = max(toReceiveLen, receiveCursor + ((receiveCursor && 0xf) * 2));
+            toReceiveLen = min(toReceiveLen, ((received & 0xf) * 2) + 3);
         }
         if(receiveCursor == 2) {
             if(received != 0x5a) {
@@ -156,9 +156,19 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
             delayMicroseconds(10);
         }
     } while(receiveCursor < toReceiveLen);
-  
+
     // 'Attention' line needs to be raised between each transaction.
     PORTB |= 1<<2;
+
+    DualShockReport *receivedReport = (DualShockReport *)toReceive;
+    if(receiveCursor <= offsetof(DualShockReport, rightStickX)) {
+        // If we didn't get any analog reports (the controller is in digital
+        // mode), set the analog sticks to centered.
+        receivedReport->rightStickX = 0x80;
+        receivedReport->rightStickY = 0x80;
+        receivedReport->leftStickX = 0x80;
+        receivedReport->leftStickY = 0x80;
+    }
 
     return toReceive;
 }
