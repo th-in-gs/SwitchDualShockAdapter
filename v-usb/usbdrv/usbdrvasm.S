@@ -371,7 +371,7 @@ usbMFTimeout:
 #else   /* USB_CFG_CHECK_CRC */
 #   if USB_CFG_CLOCK_KHZ == 12000
 #       include "usbdrvasm12.inc"
-#   elif USB_CFG_CLOCK_KHZ == 12800 || USB_CFG_CLOCK_KHZ == 12770 
+#   elif USB_CFG_CLOCK_KHZ == 12800
 #       include "usbdrvasm128.inc"
 #   elif USB_CFG_CLOCK_KHZ == 15000
 #       include "usbdrvasm15.inc"
