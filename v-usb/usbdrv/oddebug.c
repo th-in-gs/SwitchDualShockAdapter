@@ -33,13 +33,9 @@ static void printHex(uchar c)
     uartPutc(hexAscii(c >> 4));
     uartPutc(hexAscii(c));
 }
-extern uchar usbSofCount;
+
 void    odDebug(uchar prefix, uchar *data, uchar len)
 {
-    printHex(OSCCAL);
-    uartPutc(':');
-    printHex(usbSofCount);
-    uartPutc(':');
     printHex(prefix);
     uartPutc(':');
     while(len--){
