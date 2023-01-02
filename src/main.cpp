@@ -100,24 +100,6 @@ static boolean sReportPending = false;
 static boolean sInputReportsSuspended = false;
 static boolean sLedIsOn = false;
 
-#if 0
-static volatile bool sAcknowledgeWasSet = 0;
-ISR (INT1_vect) {
-    sAcknowledgeWasSet = true;
-    debugPrint('.');
-}
-
-static void clearAcknowledge()
-{
-    sAcknowledgeWasSet = 0;
-}
-
-static const boolean acknowledgeIsSignalled() 
-{
-    return sAcknowledgeWasSet;
-}
-#endif 
-
 static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTransmitLength)
 {
     static uint8_t toReceive[21] = {0};
@@ -125,7 +107,6 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
 
     // Pull-down the 'Attention' line.
     PORTB &= ~(1<<2);
-
     delayMicroseconds(10);
 
     uint8_t receiveCursor = 0;
@@ -146,7 +127,7 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
         }
         if(receiveCursor == 2) {
             if(received != 0x5a) {
-                halt(0x5a);
+                halt(0x5a, "Malformed DualShock packet");
             }
         }
         toReceive[receiveCursor] = received;
@@ -171,6 +152,16 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
     }
 
     return toReceive;
+}
+
+static uint8_t deadZonedStickPosition(uint8_t rawStickPosition)
+{
+    static const uint8_t deadZoneRadius = 0x20;
+    static const uint8_t midPosition = 0x80;
+    if(rawStickPosition >= midPosition - deadZoneRadius && rawStickPosition <= midPosition + deadZoneRadius) {
+        return midPosition;
+    }    
+    return rawStickPosition;
 }
 
 static void convertDualShockToSwitch(const DualShockReport *dualShockReport, SwitchReport *switchReport)
@@ -202,14 +193,15 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     // The mid-point of 0x80 maps to 0x808, which is a bit off - but
     // 0x80 is in fact off too - the real midpoint of [0x00 - 0xff] is 0x7f.8
     // (using a hexadecimal point there, like a decimal point).
-    const uint8_t leftStickX = dualShockReport->leftStickX;
-    const uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
+
+    const uint8_t leftStickX = deadZonedStickPosition(dualShockReport->leftStickX);
+    const uint8_t leftStickY = 0xff - deadZonedStickPosition(dualShockReport->leftStickY);
     switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
     switchReport->leftStick[1] = (leftStickX >> 4) | (leftStickY & 0xf0);    
     switchReport->leftStick[2] = leftStickY;
 
-    const uint8_t rightStickX = dualShockReport->rightStickX;
-    const uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
+    const uint8_t rightStickX = deadZonedStickPosition(dualShockReport->rightStickX);
+    const uint8_t rightStickY = 0xff - deadZonedStickPosition(dualShockReport->rightStickY);
     switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
     switchReport->rightStick[1] = (rightStickX >> 4) | (rightStickY & 0xf0);    
     switchReport->rightStick[2] = rightStickY;
@@ -268,20 +260,19 @@ static void prepareInputReport()
     report[1] = usbSofCount;
     const uint8_t innerReportLength = prepareInputSubReportInBuffer(&report[2]);
     memset(&report[2 + innerReportLength], 0, sReportSize - (2 + innerReportLength));
+    sReportPending = true;
 }
 
 static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *reportIn, uint8_t reportInLen) 
 {
     if(sReportPending) {
-        Serial.print("RprtClsh");
-        halt(0);
+        halt(0, "Report Clash");
         return;
     }
 
     const uint8_t reportSize = sReportSize;
     if(reportInLen > reportSize - 2) {
-        Serial.print("RprtBig");
-        halt(0);
+        halt(0, "Report Too Big");
         return;
     }
     
@@ -293,18 +284,15 @@ static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *rep
     sReportPending = true;
 }
 
-static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen,  void *(*copyFunction)(void *, const void *, size_t))
+static void uartReport(bool ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen,  void *(*copyFunction)(void *, const void *, size_t) = memcpy)
 {
     if(sReportPending) {
-        Serial.print("RprtClsh");
-        halt(0);
+        halt(0, "Report Clash");
         return;
     }
-
     const uint8_t reportSize = sReportSize;
     if(reportInLen > reportSize - 2) {
-        Serial.print("RprtBig");
-        halt(0);
+        halt(0, "Report Too Big");
         return;
     }
 
@@ -331,18 +319,15 @@ static void uart_report_F(bool ack, byte subCommand, const uint8_t *reportIn, ui
 
 static void uartReport_P(bool ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen)
 {
-    return uart_report_F(ack, subCommand, reportIn, reportInLen, memcpy_P);
-}
-
-static void uartReport(bool ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen)
-{
-    return uart_report_F(ack, subCommand, reportIn, reportInLen, memcpy);
+    return uartReport(ack, subCommand, reportIn, reportInLen, memcpy_P);
 }
 
 static void spiReport_P(uint16_t address, uint8_t length, const uint8_t *replyData, uint8_t replyDataLength)
 {
-    if(debugPrintOn() && replyDataLength != length) {
-        debugPrint('!');
+    if(replyDataLength != length) {
+        Serial.print(address, 16);
+        Serial.print(length, 16);
+        Serial.print(replyDataLength, 16);
     }
 
     const uint8_t bufferLength = replyDataLength + 5;
@@ -384,7 +369,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
     case 0x00: // Unknown.
     case 0x80: // Regular commands.  
         if(len != 2 || accumulatedReportBytes != 0) { // Always only 2 bytes?
-            halt(1 | reportId);
+            halt(reportId, "Unexpected report length");
         }
         reportComplete = true;
         break;
@@ -395,7 +380,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
         }
         break;
     default:
-        halt(2 | reportId);
+        halt(reportId, "Unexpected report length");
         return;
     }
 
@@ -464,7 +449,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
         // A 'UART' request.
 
         const uint8_t subCommand = reportIn[10];
-        debugPrint(':');
+        debugPrint('|');
         debugPrint(subCommand, 16);
 
         switch(subCommand) {
@@ -494,43 +479,59 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
             // NVRAM read
             const uint16_t address = reportIn[11] | reportIn[12] << 8;
             const uint16_t length = reportIn[15];
-            debugPrint(':');
+            debugPrint('<');
             debugPrint(address, 16);
             debugPrint('-');
             debugPrint(length, 16);
+
+            const PROGMEM uint8_t *reply = NULL;
+            uint8_t replyLen = 0;
             switch(address) {
             case 0x6000: {
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+                reply = sReply;
+                replyLen = sizeof(sReply);
+            } break;
+            case 0x6020: { // Sixaxis gyro config
+                static const PROGMEM uint8_t sReply[] = { 0xD3, 0xFF, 0xD5, 0xFF, 0x55, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x19, 0x00, 0xDD, 0xFF, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34 };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             case 0x6050: {
-                static const PROGMEM uint8_t reply[] = { 0xbc, 0x11, 0x42, 0x75, 0xa9, 0x28, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0xbc, 0x11, 0x42, 0x75, 0xa9, 0x28, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             case 0x6080: {
-                static const PROGMEM uint8_t reply[] = { 0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f, 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f, 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             case 0x6098: {
-                static const PROGMEM uint8_t reply[] = { 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             case 0x603d: {
-                static const PROGMEM uint8_t reply[] = { 0xba, 0x15, 0x62, 0x11, 0xb8, 0x7f, 0x29, 0x06, 0x5b, 0xff, 0xe7, 0x7e, 0x0e, 0x36, 0x56, 0x9e, 0x85, 0x60, 0xff, 0x32, 0x32, 0x32, 0xff, 0xff, 0xff };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0xba, 0x15, 0x62, 0x11, 0xb8, 0x7f, 0x29, 0x06, 0x5b, 0xff, 0xe7, 0x7e, 0x0e, 0x36, 0x56, 0x9e, 0x85, 0x60, 0xff, 0x32, 0x32, 0x32, 0xff, 0xff, 0xff };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             case 0x8010: {
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb2, 0xa1 };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb2, 0xa1 };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             case 0x8028: {
-                static const PROGMEM uint8_t reply[] = { 0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe, 0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b };
-                spiReport_P(address, length, reply, sizeof(reply));
+                static const PROGMEM uint8_t sReply[] = { 0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe, 0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b };
+                reply = sReply;
+                replyLen = sizeof(sReply);
             } break;
             default:
-                uartReport_P(false, subCommand, NULL, 0);
+                halt(address & 0xff, "Unexpected SPI read subcommand");
                 break;
-            }
+            } 
+            spiReport_P(address, length, reply, replyLen);
         } break;
         case 0x03: // Set input report mode
         case 0x04: // Trigger buttons elapsed time (?)
@@ -556,7 +557,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
         break;
     default:
         // We should never reach here because we should've halted above.
-        halt(3 | reportId);
+        halt(reportId, "Unexpected report ID");
         break;
     }
 
@@ -624,58 +625,48 @@ usbMsgLen_t usbFunctionSetup(uchar reportIn[8])
 }
 
 
-static void ledHeartbeat(unsigned long delay)
+static boolean ledHeartbeat()
 {
+    static unsigned long duration = 1000;
     static unsigned long lastBeat = 0;
 
     const unsigned long timeNow = millis();
-    if(timeNow - lastBeat >= delay) {
-        lastBeat += delay;
+    if(timeNow - lastBeat >= duration) {
+        lastBeat += duration;
         sLedIsOn = !sLedIsOn;
         if(sLedIsOn) {
             PORTC |= 1 << 5;
         } else {
             PORTC &= ~(1 << 5);
         }
+        return true;
     }
+    return false;
 }
-
-static void sendReportBlocking()
-{
-    const uint8_t reportIndex = sCurrentReport;
-
-    // Toggle the current report.
-    sCurrentReport = reportIndex == 0 ? 1 : 0;
-
-    // The next report can be filled in while we send this one.
-    // This doesn't seem to happen very much.
-    sReportPending = false;
-
-    const uint8_t reportSize = sReportSize;
-    uint8_t *report = sReports[reportIndex];
-    uint8_t reportCursor = 0;
-    do {
-        uint8_t bytesToSend = min(8, reportSize - reportCursor);
-        usbSetInterrupt(&report[reportCursor], bytesToSend);
-        reportCursor += bytesToSend;
-
-        if(reportCursor < reportSize && usbDeviceAddr != 0) {
-            while(!usbInterruptIsReady()) {
-                usbPoll();
-            }
-        }
-    } while(reportCursor < reportSize && usbDeviceAddr != 0);
-}
-
 
 void loop()
 {
-    ledHeartbeat(1000);
+    static boolean sTransmissionUnderway = false;
+    static uint8_t *sTransmittingReport = NULL;
+    static uint8_t sTransmittingReportCursor = 0;
+    static uint8_t sLastSendSofCount = 0;
+    static uint8_t sWarnedAboutSendStall = false;
+    
+    //static unsigned long sLastTransmissionEndTime = 0;
+    //static boolean sTransmittedOnLastLoop = false;
+
+    //const unsigned long loopStartTime = micros();
+    const uint8_t loopStartSOF = usbSofCount;
+
+    //if(sTransmittedOnLastLoop) {
+        //Serial.print('+');
+        //Serial.print(loopStartTime - sLastTransmissionEndTime, 10);
+        //Serial.print(' ');
+    //    sTransmittedOnLastLoop = false;
+    //}
+
     usbPoll();
 
-    static uint8_t lastSendSofCount = 0;
-    static uint8_t warnedAboutSendStall = false;
-    
     static uchar lastAddress = 0;
     if(lastAddress != usbDeviceAddr) {
         lastAddress = usbDeviceAddr;
@@ -683,27 +674,62 @@ void loop()
         debugPrint(lastAddress, 16);
         debugPrint("\r\n\n");
         
-        lastSendSofCount = usbSofCount;
-        warnedAboutSendStall = false;
+        sTransmissionUnderway = false;
+        sLastSendSofCount = usbSofCount;
+        sWarnedAboutSendStall = false;
     }
 
     if(usbDeviceAddr != 0) {
         if(usbInterruptIsReady()) {
-            if(warnedAboutSendStall) {
+            if(sWarnedAboutSendStall) {
                 debugPrint("\n\nWARNING: block removed - reports continuing\n\n");
-                warnedAboutSendStall = false;
+                sWarnedAboutSendStall = false;
             }
-            lastSendSofCount = usbSofCount;
+            sLastSendSofCount = usbSofCount;
 
-            if(sReportPending) {
-                sendReportBlocking();
-            } else if(!sInputReportsSuspended) {
-                prepareInputReport();
-                sendReportBlocking();
+            if(!sTransmissionUnderway) {
+                // Get the next report ready to transmit.
+                if(!sReportPending && !sInputReportsSuspended) {
+                    // If there's no specific report ready, and generic reports
+                    // are not suspended, prepare one.
+                    prepareInputReport();
+                }
+
+                if(sReportPending) {
+                    // Use the current buffer for transmission, and set up the other
+                    // buffer for the rest of the code to fill.
+                    sTransmittingReport = sReports[sCurrentReport];
+                    sCurrentReport = sCurrentReport == 0 ? 1 : 0;
+                    sReportPending = false;
+
+                    sTransmittingReportCursor = 0;
+                    sTransmissionUnderway = true;
+                }
+            } 
+
+            if(sTransmissionUnderway) {
+                // Send the next part of the report we're currently transmitting.
+                uint8_t bytesToSend = min(8, sReportSize - sTransmittingReportCursor);
+                usbSetInterrupt(&sTransmittingReport[sTransmittingReportCursor], bytesToSend);
+                sTransmittingReportCursor += bytesToSend;
+                if(sTransmittingReportCursor == sReportSize) {
+                    sTransmissionUnderway = false;
+                    ledHeartbeat();
+                }
+
+                //const unsigned long endTime = micros();
+                const uint8_t elapsedSOF = usbSofCount - loopStartSOF;
+                //if(elapsedSOF > 1) {
+                    Serial.print(elapsedSOF, 16);
+                //}
+                //Serial.print(endTime - loopStartTime, 10);
+
+                //sLastTransmissionEndTime = endTime;
+                //sTransmittedOnLastLoop = true;
             }
-        } else if(!warnedAboutSendStall && (usbSofCount - lastSendSofCount) > 100) {
+        } else if(!sWarnedAboutSendStall && (usbSofCount - sLastSendSofCount) > 100) {
             debugPrint("\n\nWARNING: reports blocked for over 100ms\n\n");
-            warnedAboutSendStall = true;
+            sWarnedAboutSendStall = true;
         }
     }
 }
