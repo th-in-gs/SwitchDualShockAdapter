@@ -1,0 +1,15 @@
+1d: 80 06 00 01 00 00 12 00 e0 f4		> Get Descriptor index 0 device (length 0x12)
+20: 4b 12 01 10 01 00 00 00 08 11 77	< 
+20: c3 7e 05 09 20 00 02 01 02 cc 93	< 
+20: 4b 03 01 3f 7f						< 
+1d: 00 05 03 00 00 00 00 00 ea c7		> Set address 5
+20: 4b 00 00							Ack
+24: c3 30 7a 81 00 00 00 ff 0f 78 c2	!Interrupt packet
+1d: 80 06 00 02 00 00 09 00 ae 04		> Get Descriptor config 0 (length 0x09)
+20: 4b 09 02 29 00 02 01 00 a0 0b a7	<
+20: c3 fa c0 fc							<
+1d: 80 06 00 02 00 00 29 00 b7 c4		> Get Descriptor config 0 (length 0x29)
+20: 4b 09 02 29 00 02 01 00 a0 0b a7	< - Configuration Descriptor (1 - start)
+
+
+STALL

@@ -1,0 +1,34 @@
+After queueing!
+
+80 06 00 01 00 00 12 00 e0 f4		> Get Descriptor index 0 device (length 0x12)
+4b 12 01 10 01 00 00 00 08 11 77	< 
+c3 7e 05 09 20 00 02 01 02 cc 93	< 
+4b 03 01 3f 7f						< 
+00 05 04 00 00 00 00 00 eb 70		> Set address 4
+4b 00 00							< Ack
+c3 30 cb 81 00 00 00 ff 0f d9 c9	! interrupt
+c3 00 00							< ?
+80 06 00 02 00 00 09 00 ae 04		> Get Descriptor config 0 (length 0x09)
+4b 09 02 29 00 02 01 00 a0 0b a7	<
+c3 fa c0 fc							<
+80 06 00 02 00 00 29 00 b7 c4		> Get Descriptor config 0 (length 0x29)
+4b 09 02 29 00 02 01 00 a0 0b a7	< - Configuration Descriptor (1 - start)
+c3 fa 09 04 00 00 02 03 00 09 7b	< | Configuration Descriptor (2)
+4b 00 00 09 21 01 01 00 01 92 96	< | Configuration Descriptor (3)
+c3 22 cb 00 07 05 81 03 08 a2 eb	< | Configuration Descriptor (4)
+4b 00 02 07 05 01 03 08 00 a7 bf	< | Configuration Descriptor (5)
+c3 08 41 79							< - Configuration Descriptor (6 - end)
+80 06 00 03 00 00 82 00 f5 34		> Get Descriptor index 0 string (Language, length 0x82)
+4b 04 03 09 04 09 78				< US English
+00 09 01 00 00 00 00 00 27 25		> Set config 1
+4b 00 00							< Ack
+c3 00 00							< ?
+80 06 00 02 00 00 29 00 b7 c4		> Get Descriptor config 0 (length 0x29)
+4b 09 02 29 00 02 01 00 a0 0b a7	< - Configuration Descriptor (1 - start)
+c3 fa 09 04 00 00 02 03 00 09 7b	< | Configuration Descriptor (2)
+4b 00 00 09 21 01 01 00 01 92 96	< | Configuration Descriptor (3)
+c3 22 cb 00 07 05 81 03 08 a2 eb	< | Configuration Descriptor (4)
+4b 00 02 07 05 01 03 08 00 a7 bf	< | Configuration Descriptor (5)
+80 06 00 03 00 00 ff 00 d4 64		> Get Descriptor index 0 string (Language, length 0xff)
+4b 08 41 79							< - Configuration Descriptor (6 - end)
+4b 04 03 09 04 09 78				< US English

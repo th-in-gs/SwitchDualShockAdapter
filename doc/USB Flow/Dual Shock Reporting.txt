@@ -1,0 +1,16 @@
+How long does it take to receive one report form the Dual Shock?
+
+One report is at most 21 bytes - or 168 bits.
+
+At 200KHz that's 5e-6s per bit, so 8.4E-4s per transfer - let's double that for tome between bytes = 1.68ms per transfer. That's more than the time between USB interrupts (so we can't poll in-line and expect to send a response in the next interrupt).
+
+At the moment, we send our response starting at the next interrupt after a request from the Switch.
+
+_However_, maybe we could start a poll and just send the latest data whenever we're asked for it?
+
+No, because V-USB buffers the data...
+
+Well, okay, let's up the speed to 400KHz. Then we'd have 0.84ms/poll. That's probably enough to allow us to sample whenever we're preparing a buffer and squeak in under 1ms.
+
+Oh - but we actually have _2_ ms to prepare? That definitely appears to be enough leeway if so Let's keep the 400kHZ sampling.
+

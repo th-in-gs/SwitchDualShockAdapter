@@ -1,0 +1,320 @@
+ *  Executing task: platformio device monitor --environment ATmega8 
+
+--- Terminal on /dev/cu.usbserial-214330 | 266667 8-N-1
+--- Available filters and text transformations: colorize, debug, default, direct, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+f��Hș�
+�Vj
+�j
+f��Hși
+��
+�j
+���Hși
+�␖j
+f�j
+ff�Hș�
+�␖j
+f�j
+f�Hș�
+�␖j
+f�j
+f�Hș�
+�␖j
+f�j
+f�Hș�
+�␖j
+�j
+f�Hș�
+�Vj
+�j
+f�Hș�
+�Vj
+�j
+f��Hș�
+�Vj
+�j
+f��Hș�
+�Vj
+�j
+f��Hși
+��
+�j
+���Hși
+�j
+���Hși
+�␖j
+f�j
+ff�Hș�
+�␖j
+f�j
+ff�Hș�
+�␖j
+f�j
+�1d: 80 06 00 01 00 00 12 00 e0 f4
+fd: 00
+fd: 24 02 12 40
+20: 4b 12 01 10 01 00 00 00 08 11 77
+20: c3 7e 05 09 20 00 02 01 02 cc 93
+20: 4b 03 01 3f 7f
+1d: 00 05 04 00 00 00 00 00 eb 70
+fd: 01
+fd: 94 02 00 00
+fe: 01
+fe: 94 02 00 00
+20: 4b 00 00
+23: c3 30 ca 81 00 00 00 ff 0f c9 09
+fe: 02
+fe: 00 00 ff 00
+1d: 80 06 00 02 00 00 09 00 ae 04
+fd: 02
+fd: fb 01 09 40
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa c0��5
+1�' ���0�0�� ���N�0 b�␚�
+fd: 03
+fd: fb 01 29 40
+fe: 03
+fe: fb 01 29 40
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa 09 04 00 00 02 03 00 09 7b
+20: 4b 00 00 09 21 01 01 00 01 92 96
+20: c3 22 cb 00 07 05 81 03 08 a2 eb
+20: 4b 00 02 07 05 01 03 08 00 a7 bf
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+1d: 80 06 00 01 00 00 12 00 e0 f4
+fd: 00
+fd: 24 02 12 40
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+1d: 80 06 00 01 00 00 12 00 e0 f4
+fd: 00
+fd: 24 02 12 40
+20: c3 12 01 10 01 00 00 00 08 11 77
+20: 4b 7e 05 09 20 00 02 01 02 cc 93
+20: c3 03 01 3f 7f
+fe: 01
+fe: 94 02 ff 00
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+ff:
+1d: 80 06 00 01 00 00 12 00 e0 f4
+fd: 00									Enqueue at 0
+fd: 24 02 12 40							Length 12, PROGMEM
+20: 4b 12 01 10 01 00 00 00 08 11 77
+20: c3 7e 05 09 20 00 02 01 02 cc 93
+20: 4b 03 01 3f 7f
+1d: 00 05 04 00 00 00 00 00 eb 70
+fd: 01									Enqueue at 1
+fd: 94 02 00 00							Length 0
+fe: 01									Read at 1
+fe: 94 02 00 00
+20: 4b 00 00
+fe: 02									Read at 2
+fe: 00 00 ff 00							NO_MESG
+1d: 80 06 00 02 00 00 09 00 ae 04
+fd: 02									Enqueue at 2
+fd: fb 01 09 40							Length 9, PROGMEM
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa c0 fc
+1d: 80 06 00 02 00 00 29 00 b7 c4
+fd: 03									Enqueue at 3
+fd: fb 01 29 40							Length 29, PROGMEM
+fe: 03									Read at 3
+fe: fb 01 29 40
+20: 4b 09 02 29 00 02 01 00 a0 0b a7

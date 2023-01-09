@@ -90,9 +90,9 @@ static uint8_t sReports[2][64] = { 0 };
 static uint8_t sReportSizes[2];
 static const uint8_t sReportSize = sizeof(sReports[0]);
 static uint8_t sCurrentReport = 0;
-static boolean sReportPending = false;
-static boolean sInputReportsSuspended = false;
-static boolean sLedIsOn = false;
+static bool sReportPending = false;
+static bool sInputReportsSuspended = false;
+static bool sLedIsOn = false;
 
 static unsigned long sLastSwitchPacketMillis = 0;
 
@@ -248,14 +248,14 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
 static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer) 
 {    
     static uint8_t count = 0;
-    static boolean previousLedState  = sLedIsOn;
+    static bool previousLedState  = sLedIsOn;
 
-    if(debugPrintOn() && previousLedState != sLedIsOn) {
+    if(previousLedState != sLedIsOn) {
         // Seems like a good time to output some debug stats on how many 
         // reports per second we're managing to generate.
-        debugPrint("F: ");
-        debugPrint(count, 10);
-        debugPrint('\n');
+        Serial.print("FPS:");
+        Serial.print(count, 10);
+        Serial.print('\n');
 
         count = 0;
         previousLedState = sLedIsOn;
@@ -313,15 +313,10 @@ static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *rep
     sReportPending = true;
 }
 
-static void reportUart(bool ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen,  void *(*copyFunction)(void *, const void *, size_t) = memcpy)
+static void reportUart(uint8_t ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen,  void *(*copyFunction)(void *, const void *, size_t) = memcpy)
 {
     if(sReportPending) {
         halt(0, "Report Clash");
-        return;
-    }
-    const uint8_t reportSize = sReportSize;
-    if(reportInLen > reportSize - 2) {
-        halt(0, "Report Too Big");
         return;
     }
 
@@ -331,24 +326,29 @@ static void reportUart(bool ack, byte subCommand, const uint8_t *reportIn, uint8
 
     const uint8_t inputBufferLength = prepareInputSubReportInBuffer(&report[2]);
 
-    uint8_t ackByte = 0x00;
-    if(ack) {
-        ackByte = 0x80;
-        if(reportInLen > 0) {
-            ackByte |= subCommand;
+    report[2 + inputBufferLength] = ack;
+    report[3 + inputBufferLength] = subCommand;
+
+    uint8_t reportSize = 4 + inputBufferLength;
+
+    if(reportInLen == 0) {
+        report[4 + inputBufferLength] = 0x00;
+        ++reportSize;
+    } else {
+        const uint8_t reportSizeBeforeCopy = reportSize;
+        reportSize += reportInLen;
+        if(reportSize > sReportSize) {
+            halt(0, "Report Too Big");
+            return;
         }
+        copyFunction(&report[reportSizeBeforeCopy], reportIn, reportInLen);
     }
 
-    report[2 + inputBufferLength] = ackByte;
-    report[3 + inputBufferLength] = subCommand;
-    copyFunction(&report[4 + inputBufferLength], reportIn, reportInLen);
-    memset(&report[4 + inputBufferLength + reportInLen], 0, reportSize - (4 + inputBufferLength + reportInLen));
-    //sReportSizes[sCurrentReport] = 4 + inputBufferLength + reportInLen + (reportInLen == 0 ? 2 : 0);
     sReportSizes[sCurrentReport] = reportSize;
     sReportPending = true;
 }
 
-static void reportUart_P(bool ack, byte subCommand, const uint8_t *reportIn, uint8_t reportInLen)
+static void reportUart_P(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen)
 {
     return reportUart(ack, subCommand, reportIn, reportInLen, memcpy_P);
 }
@@ -370,10 +370,10 @@ static void reportUartSpi_P(uint16_t address, uint8_t length, const uint8_t *rep
     buffer[4] = (uint8_t)(replyDataLength);
     memcpy_P(&buffer[5], replyData, replyDataLength);
 
-    return reportUart(true, 0x10, buffer, bufferLength);
+    return reportUart(0x90, 0x10, buffer, bufferLength);
 }
 
-static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len, const boolean stall)
+static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len, const bool stall)
 {
     static uint8_t reportId;
     static uint8_t reportAccumulationBuffer[sReportSize];
@@ -410,7 +410,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
         break;
     case 0x01: // 'UART' commands.
     case 0x10: // Unknown. They contain an incrementing number. Keep-alive?
-        if(accumulatedReportBytes == 8) { // These are always two packets long.
+        if(accumulatedReportBytes == 8) { // These are always two packets long, but the length varies.
             reportComplete = true;
         }
         break;
@@ -488,15 +488,9 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
         debugPrint(uartCommand, 16);
 
         switch(uartCommand) {
-        case 0x00: {
-            // Do nothing (return report)
-            static const PROGMEM uint8_t reply[] = { 0x03 };
-            reportUart_P(true, uartCommand, reply, sizeof(reply));
-        } break;
         case 0x01: {
             // Bluetooth manual pairing (?)
-            static const PROGMEM uint8_t reply[] = { 0x03, 0x01 };
-            reportUart_P(true, uartCommand, reply, sizeof(reply));
+            reportUart_P(0x81, uartCommand, NULL, 0);
         } break;
         case 0x02: {
             // Request device info
@@ -506,9 +500,9 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
                 0x02, // Unknown (Always 0x02)
                 0xc7, 0xa3, 0x22, 0x53, 0x23, 0x43, // 6 bytes of MAC address
                 0x03, // Unknown
-                0x01, // Colors?
+                0x01, // 0x01 = Use colors from SPI (below).
             };
-            reportUart_P(true, uartCommand, reply, sizeof(reply));
+            reportUart_P(0x82, uartCommand, reply, sizeof(reply));
         } break;
         case 0x10: {
             // NVRAM read
@@ -519,70 +513,79 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
             debugPrint('-');
             debugPrint(length, 16);
 
-            const uint8_t *reply = NULL;
-            uint8_t replyLen = 0;
+            const uint8_t *spiReply = NULL;
+            uint8_t spiReplyLength = 0;
             switch(address) {
             case 0x6000: { // Serial number in non-extended ASCII. If first byte is >= x80, no S/N.
-                static const PROGMEM uint8_t sReply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x6020: { // Sixaxis config
-                static const PROGMEM uint8_t sReply[] = { 0xD3, 0xFF, 0xD5, 0xFF, 0x55, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x19, 0x00, 0xDD, 0xFF, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34 };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0xD3, 0xFF, 0xD5, 0xFF, 0x55, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x19, 0x00, 0xDD, 0xFF, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34 };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x603d: { // Left/right stick calibration (9 values each), body, buttons (this overlaps with the range for the next address, below)
-                static const PROGMEM uint8_t sReply[] = { 0xba, 0x15, 0x62, 0x11, 0xb8, 0x7f, 0x29, 0x06, 0x5b, 0xff, 0xe7, 0x7e, 0x0e, 0x36, 0x56, 0x9e, 0x85, 0x60, 0xff, 0x32, 0x32, 0x32, 0xff, 0xff, 0xff };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0xba, 0x15, 0x62, 0x11, 0xb8, 0x7f, 0x29, 0x06, 0x5b, 0xff, 0xe7, 0x7e, 0x0e, 0x36, 0x56, 0x9e, 0x85, 0x60, 0xff, 0x32, 0x32, 0x32, 0xff, 0xff, 0xff };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x6050: { // 24-bit (3 byte) RGB colors - body, buttons, left grip, right grip (and an extra 0xff? Maybe it signifies whether the grips are colored?)
-                static const PROGMEM uint8_t sReply[] = { 0x32, 0x32, 0x32, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0x32, 0x32, 0x32, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x6080: { // "Factory Sensor and Stick device parameters"
-                static const PROGMEM uint8_t sReply[] = { 0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f, 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f, 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x6098: { // "Factory Stick device parameters 2, normally the same as 1, even in Pro Controller" [note this is indeed the same as the stick parameters above]
-                static const PROGMEM uint8_t sReply[] = { 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x8010: { // 8010 - 8025: User stick calibration
-                static const PROGMEM uint8_t sReply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb2, 0xa1 };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb2, 0xa1 };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             case 0x8028: { // six axis calibration.
-                static const PROGMEM uint8_t sReply[] = { 0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe, 0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b };
-                reply = sReply;
-                replyLen = sizeof(sReply);
+                static const PROGMEM uint8_t reply[] = { 0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe, 0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b };
+                spiReply = reply;
+                spiReplyLength = sizeof(reply);
             } break;
             default:
                 halt(address & 0xff, "Unexpected SPI read subcommand");
                 break;
             } 
-            reportUartSpi_P(address, length, reply, replyLen);
+            reportUartSpi_P(address, length, spiReply, spiReplyLength);
         } break;
-        case 0x03: // Set input report mode
         case 0x04: // Trigger buttons elapsed time (?)
+            reportUart_P(0x83, uartCommand, NULL, 0);
+            break;
+        case 0x48: // Set vibration enabled state
+            reportUart_P(0x82, uartCommand, NULL, 0);
+            break;
+        case 0x21: {// Set NFC/IR MCU config
+            // Request device info
+            static const PROGMEM uint8_t reply[] = { 0x01, 0x00, 0xFF, 0x00, 0x08, 0x00, 0x1B, 0x01 };
+            reportUart_P(0xa0, uartCommand, reply, sizeof(reply));
+        } break;
+        case 0x00: // Do nothing (return report)
+        case 0x03: // Set input report mode
         case 0x08: // Set shipment low power state
-        case 0x21: // Set NFC/IR MCU configuration
         case 0x22: // Set NFC/IR MCU state
         case 0x30: // Set player lights
         case 0x38: // Set HOME light
         case 0x40: // Set IMU enabled state
         case 0x41: // Set IMU sesitivity
-        case 0x48: // Set vibration enabled state
             // Unhandled, but we'll tell the switch we've handled it...
-            reportUart_P(true, uartCommand, NULL, 0);
+            reportUart_P(0x80, uartCommand, NULL, 0);
             break;
         default:
-            reportUart_P(false, uartCommand, NULL, 0);
+            reportUart_P(0x80, uartCommand, NULL, 0);
             halt(uartCommand, "Unexpected UART subcommand");
             break;
         }
@@ -610,7 +613,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
             sCommandHistory[sCommandHistoryCursor][1] = 0;
             sCommandHistory[sCommandHistoryCursor][2] = 0;
         }
-        uint16_t count = (uint16_t)sCommandHistory[sCommandHistoryCursor][2] << 8 | (uint16_t)sCommandHistory[sCommandHistoryCursor][1];
+        uint16_t count = ((uint16_t)(sCommandHistory[sCommandHistoryCursor][1])) << 8 | (uint16_t)(sCommandHistory[sCommandHistoryCursor][2]);
         ++count;
         sCommandHistory[sCommandHistoryCursor][1] = count >> 8;
         sCommandHistory[sCommandHistoryCursor][2] = (count & 0xff);
@@ -631,7 +634,7 @@ static void usbFunctionWriteOutOrStall_inner(const uchar *data, const uchar len,
     debugPrint(OSCCAL, 16);
 }
 
-static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const boolean stall)
+static void usbFunctionWriteOutOrStall(const uchar *data, const uchar len, const bool stall)
 {
     usbFunctionWriteOutOrStall_inner(data, len, stall);
 }
@@ -716,7 +719,7 @@ static void ledHeartbeat()
 
 void loop()
 {
-    static boolean sTransmissionUnderway = false;
+    static bool sTransmissionUnderway = false;
     static uint8_t *sTransmittingReport = NULL;
     static uint8_t sTransmittingReportSize;
     static uint8_t sTransmittingReportCursor = 0;
@@ -724,7 +727,7 @@ void loop()
     static uint8_t sWarnedAboutSendStall = false;
     
     //static unsigned long sLastTransmissionEndTime = 0;
-    //static boolean sTransmittedOnLastLoop = false;
+    //static bool sTransmittedOnLastLoop = false;
 
     //const unsigned long loopStartTime = micros();
     const uint8_t loopStartSOF = usbSofCount;

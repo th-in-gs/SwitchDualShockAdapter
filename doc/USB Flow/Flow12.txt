@@ -1,0 +1,44 @@
+1d: 80 06 00 01 00 00 12 00 e0 f4	> Get Descriptor index 0 device (length 0x12)
+20: 4b 12 01 10 01 00 00 00 08 11 77	< 
+20: c3 7e 05 09 20 00 02 01 02 cc 93	< 
+20: 4b 03 01 3f 7f						< 
+1d: 00 05 03 00 00 00 00 00 ea c7		> Set address 4(?)
+20: 4b 00 00							Ack
+
+
+Controller Online - USB Address:4
+
+1d: 80 06 00 02 00 00 09 00 ae 04		> Get Descriptor config 0 (length 0x09)
+20: 4b 09 02 29 00 02 01 00 a0 0b a7	<
+20: c3 fa c0 fc							<
+1d: 80 06 00 02 00 00 29 00 b7 c4		> Get Descriptor config 0 (length 0x29)
+20: 4b 09 02 29 00 02 01 00 a0 0b a7	< - Configuration Descriptor (1 - start)
+20: c3 fa 09 04 00 00 02 03 00 09 7b	< | Configuration Descriptor (2)
+20: 4b 00 00 09 21 01 01 00 01 92 96	< | Configuration Descriptor (3)
+20: c3 22 cb 00 07 05 81 03 08 a2 eb	< | Configuration Descriptor (4)
+20: 4b 00 02 07 05 01 03 08 00 a7 bf	< | Configuration Descriptor (5)
+20: c3 08 41 79							< - Configuration Descriptor (6 - end)
+1d: 80 06 00 03 00 00 82 00 f5 34		> Get Descriptor index 0 string (Language, length 0x82)
+20: 4b 04 03 09 04 09 78				< US English
+1d: 00 09 01 00 00 00 00 00 27 25		> Set config 1
+20: 4b 00 00							< Ack
+1d: 80 06 00 02 00 00 29 00 b7 c4		> Get config 0 (length 0x29)
+20: 4b 09 02 29 00 02 01 00 a0 0b a7	< - Configuration Descriptor (1 - start)
+1d: 80 06 00 03 00 00 ff 00 d4 64		> Get Descriptor index 0 string (Language, length 0xff)
+20: 4b 04 03 09 04 09 78				< US English
+1d: 80 06 01 03 09 04 40 00 e7 d8		> Get Descriptor index 1 string (Vendor)
+20: 4b 26 03 4e 00 69 00 6e 00 30 d4
+20: c3 74 00 65 00 6e 00 64 00 86 fe
+20: 4b 6f 00 20 00 43 00 6f 00 c6 88
+20: c3 2e 00 2c 00 20 00 4c 00 04 cc
+20: 4b 74 00 64 00 2e 00 f7 c0
+1d: 80 06 02 03 09 04 40 00 e7 eb		> Get Descriptor index 2 string (Device)
+20: 4b 1e 03 50 00 72 00 6f 00 36 ac
+20: c3 20 00 43 00 6f 00 6e 00 82 6b
+20: 4b 74 00 72 00 6f 00 6c 00 83 e5
+20: c3 6c 00 65 00 72 00 cc e4
+1d: 80 06 03 03 09 04 40 00 e6 3a		> Get Descriptor index 3 string (Serial)
+20: 4b 1a 03 30 00 30 00 30 00 13 77
+20: c3 30 00 30 00 30 00 30 00 a2 10
+20: 4b 30 00 30 00 30 00 30 00 a2 10
+20: c3 31 00 eb df

@@ -1,0 +1,121 @@
+FROM COMPUTER:
+
+1d: 00 05 11 00 00 00 00 00 e9 b5
+fd: 00									Enqueue at 0
+fd: 91 02 00 00							Length 0
+20: 4b 00 00
+23: c3 30 1b 81 00 00 
+1d: 80 06 00 01 00 00 12 00 e0 f4
+fd: 01									Enqueue at 1
+fd: 24 02 12 40							Length 12, PROGMEM
+20: 4b 12 01 10 01 00 00 00 08 11 77
+20: c3 7e 05 09 20 00 02 01 02 cc 93
+20: 4b 03 01 3f 7f
+1d: 80 06 02 03 09 04 02 00 d7 4b
+fd: 02									Enqueue at 2
+fd: b3 01 02 40							Length 2, PROGMEM
+fe: 02									Read at 2
+fe: b3 01 02 40							Length 2, PROGMEM
+20: 4b 1e 03 b7 ee
+1d: 80 06 02 03 09 04 1e 00 df 8b
+fd: 03									Enqueue at 3
+fd: b3 01 1e 40							Length 1e, PROGMEM
+fe: 03									Read at 3
+fe: b3 01 1e 40							Length 1e, PROGMEM
+20: 4b 1e 03 50 00 72 00 6f 00 36 ac
+20: c3 20 00 43 00 6f 00 6e 00 82 6b
+20: 4b 74 00 72 00 6f 00 6c 00 83 e5
+20: c3 6c 00 65 00 72 00 cc e4
+1d: 80 06 01 03 09 04 02 00 d7 78
+fd: 04									Enqueue at 4
+fd: d1 01 02 40							Length 2, PROGMEM
+fe: 04									Read at 4
+fe: d1 01 02 40							Length 2, PROGMEM
+20: 4b 26 03 a4 2e
+1d: 80 06 01 03 09 04 26 00 cc 78
+fd: 05									Enqueue at 5
+fd: d1 01 26 40							Length 26, PROGMEM
+fe: 05									Read at 5
+fe: d1 01 26 40							Length 26, PROGMEM
+20: 4b 26 03 4e 00 69 00 6e 00 30 d4
+20: c3 74 00 65 00 6e 00 64 00 86 fe
+20: 4b 6f 00 20 00 43 00 6f 00 c6 88
+20: c3 2e 00 2c 00 20 00 4c 00 04 cc
+20: 4b 74 00 64 00 2e 00 f7 c0
+1d: 80 06 03 03 09 04 02 00 d6 9a
+fd: 06									Enqueue at 6
+fd: 99 01 02 40							Length 2, PROGMEM
+fe: 06									Read at 6
+fe: 99 01 02 40							Length 2, PROGMEM
+20: 4b 1a 03 b5 2e
+1d: 80 06 03 03 09 04 1a 00 dc 9a
+fd: 07									Enqueue at 7
+fd: 99 01 1a 40							Length 1a, PROGMEM
+fe: 07									Read at 7
+fe: 99 01 1a 40							Length 1a, PROGMEM
+20: 4b 1a 03 30 00 30 00 30 00 13 77
+20: c3 30 00 30 00 30 00 30 00 a2 10
+20: 4b 30 00 30 00 30 00 30 00 a2 10
+1d: 80 06 03 03 09 04 1a 00 dc 9a
+fd: 00									Enqueue at 0
+fd: 99 01 1a 40							Length 1a, PROGMEM
+20: c3 31 00 eb df
+1d: 80 06 00 02 00 00 09 00 ae 04
+fd: 01									Enqueue at 1
+fd: fb 01 09 40							Length 9, PROGMEM
+fe: 00									Read at 0
+fe: 99 01 1a 40							Length 1a, PROGMEM
+20: 4b 1a 03 30 00 30 00 30 00 13 77
+20: c3 30 00 30 00 30 00 30 00 a2 10
+1d: 80 06 00 02 00 00 10 00 a5 94
+fd: 02									Enqueue at 2
+fd: fb 01 10 40							Length 10, PROGMEM
+20: 4b 30 00 30 00 30 00 30 00 a2 10
+20: c3 31 00 eb df
+1d: 80 06 00 02 00 00 10 00 a5 94
+fd: 03									Enqueue at 3
+fd: fb 01 10 40							Length 10, PROGMEM
+fe: 01									Read at 1
+fe: fb 01 09 40							Length 9, PROGMEM
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa c0 fc
+1d: 80 06 00 02 00 00 29 00 b7 c4
+fd: 04									Enqueue at 4
+fd: fb 01 29 40							Length 29, PROGMEM
+fe: 02									Read at 2
+fe: fb 01 10 40							Length 10, PROGMEM
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa 09 04 00 00 02 03 00 09 7b
+20: 4b 00 00
+1d: 80 06 00 02 00 00 29 00 b7 c4
+fd: 05									Enqueue at 5
+fd: fb 01 29 40							Length 29, PROGMEM
+fe: 03									Read at 3
+fe: fb 01 10 40							Length 10, PROGMEM
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa 09 04 00 00 02 03 00 09 7b
+20: 4b 00 00
+1d: 80 06 00 02 00 00 29 00 b7 c4
+fd: 06									Enqueue at 6
+fd: fb 01 29 40							Length 29, PROGMEM
+fe: 04									Read at 4
+fe: fb 01 29 40							Length 29, PROGMEM
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+20: c3 fa 09 04 00 00 02 03 00 09 7b
+20: 4b 00 00 09 21 01 01 00 01 92 96
+20: c3 22 cb 00 07 05 81 03 08 a2 eb
+20: 4b 00 02 07 05 01 03 08 00 a7 bf
+20: c3 08 41 79
+fe: 05									Read at 5
+fe: fb 01 29 40							Length 29, PROGMEM
+20: 4b 09 02 29 00 02 01 00 a0 0b a7
+1d: 00 09 01 00 00 00 00 00 27 25
+fd: 07									Enqueue at 7
+fd: 91 02 00 00							Length 0, PROGMEM
+1d: 00 09 01 00 00 00 00 00 27 25
+fd: 00									Enqueue at 0
+fd: 91 02 00 00							Length 0, PROGMEM
+1d: 00 09 01 00 00 00 00 00 27 25
+fd: 01									Enqueue at 1
+fd: 91 02 00 00							Length 0, PROGMEM
+20: c3 fa 09 04 00 00 02 03 00 09 7b
