@@ -1,10 +1,8 @@
 ---
 title: "Switch Dual Shock adapter part 2: Connecting to USB"
-date: 2022-12-23
+date: 2022-12-24
 tags: [switch-dual-shock-adapter-series, electronics, programming, hardware, atmega, atmega8a, avr, v-usb, usb, platformio,  arduino, nintendo-switch, dual-shock, project-log]
-draft: true
 ---
-
 In this [series of posts](https://www.blog.montgomerie.net/tags/switch-dual-shock-adapter-series/), I'm attempting to make a [Dual Shock](https://en.wikipedia.org/wiki/DualShock) to [Switch](https://www.nintendo.com/switch/) controller adapter. It will plug into the Switch Dock's USB port.
 
 [In the first post of this series](https://www.blog.montgomerie.net/posts/2022-12-21-making-a-dual-shock-to-nintendo-switch-controller-adapter/), I got a development environment set up, a programmed ATmega8A onto a breadboard, and code I wrote controlling a blinking LED. In this post, I plan to get [V-USB](https://www.obdev.at/products/vusb/index.html) set up, and an LED blinking on a breadboard - OVER USB!
@@ -548,13 +546,17 @@ See you next time, when I will try to actually communicate with a Nintendo Switc
 
 [^interrupt]: 'Interrupts' are a feature of most processors. Processors have circuitry that can detect a change of state in something (like an IO pin going from high to low). When it senses that change of state, the processor will immediately stop what it's doing and execute an 'interrupt handler' - basically a specially registered function. After an interrupt handler is finished, the processor goes back to doing whatever it was doing before, with the original code none the wiser that it was interrupted unless it's measuring elapsed time or something. The naming of 'interrupts' is quite intuitive - they literally do cause the processor to interrupt whatever code was already running and do something else for a short while. On the ATmega8A, the handler for 'interrupt 0' can be configured to run when the state of pin 4 changes. V-USB uses this to run its USB data reception function whenever there's activity on the data lines.
 
-[^ports]: A 'port' is a name given to a byte of memory-mapped IO. Even if you're an Arduino veteran, you might not have encountered this before - but if you're used to using functions like `digitalWrite()` or `digitalRead()`, they're using 'ports' inside. On the ATmega, there are three `PORT` bytes available as *global variables* to *all* the code.
+[^ports]: A 'port' is a name given to a byte of memory-mapped IO. Even if you're an Arduino veteran, you might not have encountered this before - but if you're used to using functions like `digitalWrite()` or `digitalRead()`, they're using 'ports' inside. On the ATmega, there are three `PORT` and `PIN` bytes available as *global variables* to *all* your code.
 
 	Take a look again at the pin-out diagram of our ATmega8A from [the datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega8A-Data-Sheet-DS40001974B.pdf):
 	
 	![ATmega8A Pin Out Diagram](ATmega8APinout.DarkInvertable.png)
 	
-	You will see that all the pins on the chip are labeled with "port bit" labels - 'PD0', 'PC6', 'PB4' etc. The `PORTD` global variable, for example, contains, as its individual 8 bits, the state of the physical pins labeled with the prefix 'PD' on that diagram - with a '1' for high, and a '0' for low. For example, if you were to look at the third bit of the global `PORTD` variable, it would correspond to state of the pin labeled 'PD3' - pin 5. The state of pin 28, labeled 'PC5' in the diagram, is represented as third bit in the global `PORTC` variable. If the pins are configured for output, you can even directly set the `PORT` variables to change their state!
+	You will see that all the pins on the chip are labeled with "port bit" labels - 'PD0', 'PC6', 'PB4' etc. The `PORTD` global variable, for example, contains, as its individual 8 bits, the output state of the physical pins labeled with the prefix 'PD' on that diagram - with a '1' for output high, and a '0' for output low. For example, if you were to set the third bit of the global `PORTD` variable, it would, presuming it was configured as an output, set state of the pin labeled 'PD3' - pin 5. The output state of pin 28, labeled 'PC5' in the diagram, is represented as third bit in the global `PORTC` variable. 
+	
+    If the pins are configured for _input_, you can _read_ the state of the similar `PIN`-prefixed variables to get their state. Looking at the bits of `PINC` would get you the state of the pins making up port C - those labeled with a `PC` prefix.
+	
+	*Note that an earlier revision of this post incorrectly conflated the PORTx and PINx variables. Despite its apparent simplicity, port confuses me too sometimes!*
 
 [^initialize]: Informed by the [V-USB wiki](http://vusb.wikidot.com/driver-api) and the examples included in the V-USB repo.
 
