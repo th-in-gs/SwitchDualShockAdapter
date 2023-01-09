@@ -105,8 +105,8 @@ Confusingly to software folks like me, 'fuses' are counted as 'active' if their 
 
 I'm setting, for the 'low' fuse:
 
-- `BODLEVEL = 1`: Brownout detection active (this will reset the chip if the power drops below the brownout level, rather than it just behaving erratically).
-- `BODEN = 0`: Brownout level 2.7V.
+- `BODLEVEL = 1`: Brownout level 2.7V.
+- `BODEN = 0`: Brownout detection active (this will reset the chip if the power drops below the brownout level, rather than it just behaving erratically).
 - `SUT = 10`, `CKSEL=0100`: Use the 8MHz internal oscillator, with a 64ms startup delay when powered on. Probably more startup delay than necessary - but it means the rest of the circuit has plenty of time to stabilize before processing starts, and I doubt it will be an annoying delay when plugging our convertor in.
 
 All together, this is binary `0b010100100`, or `0xA4` in hex.
