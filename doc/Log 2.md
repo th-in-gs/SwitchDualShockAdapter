@@ -3,7 +3,7 @@ title: "Switch Dual Shock adapter part 2: Connecting to USB"
 date: 2022-12-24
 tags: [switch-dual-shock-adapter-series, electronics, programming, hardware, atmega, atmega8a, avr, v-usb, usb, platformio,  arduino, nintendo-switch, dual-shock, project-log]
 ---
-In this [series of posts](https://www.blog.montgomerie.net/tags/switch-dual-shock-adapter-series/), I'm attempting to make a [Dual Shock](https://en.wikipedia.org/wiki/DualShock) to [Switch](https://www.nintendo.com/switch/) controller adapter. It will plug into the Switch Dock's USB port.
+*In this [series of posts](https://www.blog.montgomerie.net/tags/switch-dual-shock-adapter-series/), I'm attempting to make a [Dual Shock](https://en.wikipedia.org/wiki/DualShock) to [Switch](https://www.nintendo.com/switch/) controller adapter. It will plug into the Switch Dock's USB port.*
 
 [In the first post of this series](https://www.blog.montgomerie.net/posts/2022-12-21-making-a-dual-shock-to-nintendo-switch-controller-adapter/), I got a development environment set up, a programmed ATmega8A onto a breadboard, and code I wrote controlling a blinking LED. In this post, I plan to get [V-USB](https://www.obdev.at/products/vusb/index.html) set up, and an LED blinking on a breadboard - OVER USB!
 
@@ -403,7 +403,7 @@ This is what my breadboard looks like now. I had to move the ATmega over a littl
 
 At last - here we go! Cross your fingers - I'm going to plug this thing in to my computer!
 
-{{< video src="USBLED" >}}
+{{< video src="USBLEDLoop" controls="false" playsinline="true" loop="true" autoplay="true" muted="true" >}}
 
 The LED is blinking! And, because of our `OSCCAL` clock synchronization, it is blinking with a precise 1s on/off rather than the 1.6s period we saw before. 
 
