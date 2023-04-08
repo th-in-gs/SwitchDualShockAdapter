@@ -5,7 +5,7 @@ extern "C" {
     #include "descriptors.h"
     void usbFunctionRxHook(const uchar *data, uchar len);
 
-    // We declare this to be used by V-USB's 'osccal.h' oscilator calibration 
+    // We declare this to be used by V-USB's 'osccal.h' oscilator calibration
     // routine.
     uchar lastTimer0Value = 0;
     extern uchar usbDeviceAddr;
