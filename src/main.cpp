@@ -11,7 +11,11 @@ extern "C" {
 
 void setup()
 {
-    pinMode(LED_BUILTIN, OUTPUT);
+    // We will use Port B bits 1-4 (pins 15-18) as 'debug' output, and
+    // bit 5 (pin 19) as our one-second-blinking 'status' LED.
+    // Configure them as output, and ensure they start as zero.
+    DDRB  |= 0b00111110;
+    PORTB &= 0b11000001;
 
     // Disable interrupts for USB reset.
     noInterrupts();
@@ -156,13 +160,19 @@ static void spiReport_P(uint16_t address, uint8_t length, const uint8_t *replyDa
     return uartReport(true, 0x10, buffer, bufferLength);
 }
 
-void usbFunctionWriteOut(uchar *data, uchar len)
+static void usbFunctionWriteOutInternal(uchar *data, uchar len)
 {
     static uint8_t reportId;
     static uint8_t reportAccumulationBuffer[sReportSize];
     static uint8_t accumulatedReportBytes = 0;
 
     if(accumulatedReportBytes == 0) {
+        // Debug signal that we've started accumulating and processing a report.
+        // This will remain set over multiple calls to this function, until
+        // we've fully processed the report.
+        PORTB |= (1 << 4);
+
+        // We read the report ID from the first packet.
         reportId = data[0];
     }
 
@@ -334,6 +344,15 @@ void usbFunctionWriteOut(uchar *data, uchar len)
         halt(3 | reportId);
         break;
     }
+
+    PORTB &= ~(1 << 4); // Debug signal that we've stopped processing a report.
+}
+
+void usbFunctionWriteOut(uchar *data, uchar len)
+{
+    PORTB |= (1 << 3);
+    usbFunctionWriteOutInternal(data, len);
+    PORTB &= ~(1 << 3);
 }
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
@@ -348,6 +367,8 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 
 static void sendReportBlocking()
 {
+    PORTB |= (1 << 2);
+
     const uint8_t reportIndex = sCurrentReport;
     sCurrentReport = reportIndex == 0 ? 1 : 0;
 
@@ -366,6 +387,8 @@ static void sendReportBlocking()
         usbSetInterrupt(&report[reportCursor], bytesToSend);
         reportCursor += bytesToSend;
     } while(reportCursor < reportSize);
+
+    PORTB &= ~(1 << 2);
 }
 
 // Call regularly to blink the LED every 1 second.
@@ -377,7 +400,11 @@ static void ledHeartbeat()
     if(timeNow - lastBeat >= 1000) {
         lastBeat = timeNow;
         sLedIsOn = !sLedIsOn;
-        digitalWrite(LED_BUILTIN, sLedIsOn);
+        if(sLedIsOn) {
+            PORTB &= ~(1 << 5);
+        } else {
+            PORTB |= (1 << 5);
+        }
     }
 }
 
@@ -386,7 +413,10 @@ void loop()
     ledHeartbeat();
     usbPoll();
 
+    PORTB |= (1 << 1);
+
     if(usbInterruptIsReady()) {
+
         if(sReportPending) {
             sendReportBlocking();
         } else if(!sInputReportsSuspended) {
@@ -394,4 +424,6 @@ void loop()
             sendReportBlocking();
         }
     }
+
+    PORTB &= ~(1 << 1);
 }
