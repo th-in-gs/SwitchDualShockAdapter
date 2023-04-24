@@ -367,8 +367,6 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 
 static void sendReportBlocking()
 {
-    PORTB |= (1 << 2);
-
     const uint8_t reportIndex = sCurrentReport;
     sCurrentReport = reportIndex == 0 ? 1 : 0;
 
@@ -380,15 +378,17 @@ static void sendReportBlocking()
     uint8_t *report = sReports[reportIndex];
     uint8_t reportCursor = 0;
     do {
-        while(!usbInterruptIsReady()) {
-            usbPoll();
-        }
-        uint8_t bytesToSend = min(8, reportSize - reportCursor);
-        usbSetInterrupt(&report[reportCursor], bytesToSend);
-        reportCursor += bytesToSend;
-    } while(reportCursor < reportSize);
+        PORTB |= (1 << 2);
+        usbPoll();
+        if(usbInterruptIsReady()) {
 
-    PORTB &= ~(1 << 2);
+            uint8_t bytesToSend = min(8, reportSize - reportCursor);
+            usbSetInterrupt(&report[reportCursor], bytesToSend);
+            reportCursor += bytesToSend;
+
+        }
+        PORTB &= ~(1 << 2);
+    } while(reportCursor < reportSize);
 }
 
 // Call regularly to blink the LED every 1 second.
@@ -410,13 +410,12 @@ static void ledHeartbeat()
 
 void loop()
 {
+    PORTB |= (1 << 1);
+
     ledHeartbeat();
     usbPoll();
 
-    PORTB |= (1 << 1);
-
     if(usbInterruptIsReady()) {
-
         if(sReportPending) {
             sendReportBlocking();
         } else if(!sInputReportsSuspended) {
