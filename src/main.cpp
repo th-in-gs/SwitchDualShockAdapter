@@ -7,6 +7,8 @@ extern "C" {
     // We declare this to be used by V-USB's 'osccal.h' oscilator calibration
     // routine.
     uint8_t lastTimer0Value = 0;
+
+    void usbFunctionRxHook(const uchar *data, const uchar len);
 }
 
 #define DEBUG_PRINT_ON 0
@@ -196,11 +198,20 @@ static void reportUartSpi_P(uint16_t address, uint8_t length, const uint8_t *rep
     return reportUart(0x90, 0x10, buffer, bufferLength);
 }
 
-static void usbFunctionWriteOutInternal(uchar *data, uchar len)
+static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAbandonAccumulatedReport)
 {
     static uint8_t reportId;
     static uint8_t reportAccumulationBuffer[sReportSize];
     static uint8_t accumulatedReportBytes = 0;
+
+    if(shouldAbandonAccumulatedReport) {
+        // The host has told us it's stalling the endpoint.
+        // Abandon reception of any in-progress reports - we're not going to
+        // get the rest of it :-(
+        accumulatedReportBytes = 0;
+        PORTB &= ~(1 << 4); // Debug signal that we've stopped processing a report.
+        return;
+    }
 
     if(accumulatedReportBytes == 0) {
         reportId = data[0];
@@ -450,8 +461,36 @@ static void usbFunctionWriteOutInternal(uchar *data, uchar len)
 void usbFunctionWriteOut(uchar *data, uchar len)
 {
     PORTB |= (1 << 3);
-    usbFunctionWriteOutInternal(data, len);
+    usbFunctionWriteOutOrAbandon(data, len, false);
     PORTB &= ~(1 << 3);
+}
+
+void usbFunctionRxHook(const uchar *data, const uchar len)
+{
+    if(usbRxToken == USBPID_SETUP) {
+        const usbRequest_t *request = (const usbRequest_t *)data;
+        if((request->bmRequestType & USBRQ_RCPT_MASK) == USBRQ_RCPT_ENDPOINT &&
+            request->bRequest == USBRQ_CLEAR_FEATURE &&
+            request->wIndex.bytes[0] == 1) {
+            // This is an clear of ENDPOINT_HALT for OUT endpoint 1
+            // (i.e. the one to us from the host).
+            // We need to abandon any old in-progress report reception - we
+            // won't get the rest of the report from before the stall.
+            //
+            // We could also check the request->vWalue here for the specific
+            // feature that's being cleared - but HALT is the only feature that
+            // _can_ be cleared on an interrupt endpoint, so it's not actually
+            // necessary to check.
+            debugPrint("\n!Clear HALT ");
+            debugPrint(request->wIndex.bytes[0], 16);
+            debugPrint("!\n");
+            usbFunctionWriteOutOrAbandon(NULL, 0, true);
+        }
+    }
+
+    if(usbCrc16(data, len + 2) != 0x4FFE) {
+        halt(0, "CRC error!");
+    }
 }
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
