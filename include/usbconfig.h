@@ -176,14 +176,20 @@ section at the end of this file).
  * counts SOF packets. This feature requires that the hardware interrupt is
  * connected to D- instead of D+.
  */
-/* #ifdef __ASSEMBLER__
- * macro myAssemblerMacro
- *     in      YL, TCNT0
- *     sts     timer0Snapshot, YL
- *     endm
- * #endif
- * #define USB_SOF_HOOK                    myAssemblerMacro
- * This macro (if defined) is executed in the assembler module when a
+#ifdef __ASSEMBLER__
+macro sofHookAssemblerMacro
+    push YH         // The docs say we're only allowed to use YL, but we need
+                    // two registers for this so we save the current value of
+                    // YH.
+    ldi YH, 1       // Load '1' into YH.
+    in YL, PORTC    // Load PORTC into YL.
+    eor YL, YH      // Exclusive-or them together to toggle bit 0.
+    out PORTC, YL   // Write the result out to PORTC.
+    pop YH          // Restore YH.
+endm
+#define USB_SOF_HOOK                    sofHookAssemblerMacro
+#endif
+/* This macro (if defined) is executed in the assembler module when a
  * Start Of Frame condition is detected. It is recommended to define it to
  * the name of an assembler macro which is defined here as well so that more
  * than one assembler instruction can be used. The macro may use the register
@@ -377,6 +383,6 @@ section at the end of this file).
 /* #define USB_INTR_PENDING_BIT    INTF0 */
 /* #define USB_INTR_VECTOR         INT0_vect */
 
-#include "osctune.h"
+//#include "osctune.h"
 
 #endif /* __usbconfig_h_included__ */
