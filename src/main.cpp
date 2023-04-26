@@ -28,6 +28,10 @@ void setup()
     DDRB  |= 0b00111110;
     PORTB &= 0b11000001;
 
+    DDRC  |= 0b00000001;
+    PORTB &= 0b11111110;
+
+
     Serial.begin(250000);
 
     // Disable interrupts for USB reset.
@@ -455,6 +459,11 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     // We check this elsewhere to be sure packets are continuning to be
     // received.
     sLastSwitchPacketMillis = millis();
+
+    // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
+    debugPrint(' ');
+    debugPrint(OSCCAL, 16);
+
     PORTB &= ~(1 << 4); // Debug signal that we've stopped processing a report.
 }
 
@@ -545,7 +554,7 @@ static void ledHeartbeat()
         }
     }
 
-    if(sLastSwitchPacketMillis != 0 && timeNow - sLastSwitchPacketMillis > 1000) {
+    if(sLastSwitchPacketMillis != 0 && timeNow - sLastSwitchPacketMillis > 5000) {
         halt(timeNow - sLastSwitchPacketMillis, "Packets stopped!");
     }
 }
