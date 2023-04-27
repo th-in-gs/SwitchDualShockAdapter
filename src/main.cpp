@@ -28,8 +28,8 @@ void setup()
     DDRB  |= 0b00111110;
     PORTB &= 0b11000001;
 
-    DDRC  |= 0b00000111;
-    PORTC &= 0b11111000;
+    DDRC  |= 0b00000001;
+    PORTC &= 0b11111110;
 
 
     Serial.begin(250000);

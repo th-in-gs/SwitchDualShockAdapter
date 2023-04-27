@@ -99,9 +99,6 @@ doReturn:
     rjmp    waitForJ            ;[51] save the pops and pushes -- a new interrupt is already pending
 sofError:
     POP_RETI                    ;macro call
-    cbi     PORTC, 1
-    sbi     PORTC, 2
-    cbi     PORTC, 2
     reti
 
 handleData:
