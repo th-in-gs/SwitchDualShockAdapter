@@ -44,12 +44,9 @@ USB_INTR_VECTOR:
 ;YL is guarenteed to be < 0x80 because I flag is clear. When we jump to
 ;waitForJ, ensure that this prerequisite is met.
 waitForJ:
-    cbi     PORTC, 1
-    sbi     PORTC, 1
-waitForJForReal:
     inc     YL
     sbis    USBIN, USBMINUS
-    brne    waitForJForReal        ; just make sure we have ANY timeout
+    brne    waitForJ        ; just make sure we have ANY timeout
 waitForK:
 ;The following code results in a sampling window of < 1/4 bit which meets the spec.
     sbis    USBIN, USBMINUS     ;[-15]
@@ -242,7 +239,7 @@ bitstuffN:
     nop                     ;[9]
     out     USBOUT, x1      ;[10] <-- out
     rjmp    didStuffN       ;[0]
-
+    
 bitstuff6:
     eor     x1, x4          ;[5]
     ldi     x2, 0           ;[6] Carry is zero due to brcc
