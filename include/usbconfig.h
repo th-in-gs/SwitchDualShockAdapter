@@ -383,6 +383,18 @@ endm
 /* #define USB_INTR_PENDING_BIT    INTF0 */
 /* #define USB_INTR_VECTOR         INT0_vect */
 
-//#include "osctune.h"
+#ifdef __ASSEMBLER__
+
+#undef USB_SOF_HOOK
+#include "osctune.h"
+
+#undef USB_SOF_HOOK
+macro realSOFHook
+    tuneOsccal
+    sofHookAssemblerMacro
+endm
+#define USB_SOF_HOOK                    realSOFHook
+
+#endif
 
 #endif /* __usbconfig_h_included__ */
