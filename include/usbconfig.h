@@ -176,20 +176,14 @@ section at the end of this file).
  * counts SOF packets. This feature requires that the hardware interrupt is
  * connected to D- instead of D+.
  */
-#ifdef __ASSEMBLER__
-macro sofHookAssemblerMacro
-    push YH         // The docs say we're only allowed to use YL, but we need
-                    // two registers for this so we save the current value of
-                    // YH.
-    ldi YH, 1       // Load '1' into YH.
-    in YL, PORTC    // Load PORTC into YL.
-    eor YL, YH      // Exclusive-or them together to toggle bit 0.
-    out PORTC, YL   // Write the result out to PORTC.
-    pop YH          // Restore YH.
-endm
-#define USB_SOF_HOOK                    sofHookAssemblerMacro
-#endif
-/* This macro (if defined) is executed in the assembler module when a
+/* #ifdef __ASSEMBLER__
+ * macro myAssemblerMacro
+ *     in      YL, TCNT0
+ *     sts     timer0Snapshot, YL
+ *     endm
+ * #endif
+ * #define USB_SOF_HOOK                    myAssemblerMacro
+ * This macro (if defined) is executed in the assembler module when a
  * Start Of Frame condition is detected. It is recommended to define it to
  * the name of an assembler macro which is defined here as well so that more
  * than one assembler instruction can be used. The macro may use the register
@@ -384,17 +378,25 @@ endm
 /* #define USB_INTR_VECTOR         INT0_vect */
 
 #ifdef __ASSEMBLER__
+    #include "osctune.h"
 
-#undef USB_SOF_HOOK
-#include "osctune.h"
+    macro realSOFHook
+        // For debugging purposes, toggle bit 0 of PORTC on every SOF.
+        // Really don't want to spend much time doing this - we run the risk of
+        // causing V-USB to miss the real data packet that might be about to
+        // start.
+        // The just-incremented usbSOFCount is already in YL, so we can use
+        // YL's bit 0 to decide how to set the debug port bit to achieve a
+        // toggle without loading the current value.
+        cbi PORTC, 0 // Clear the debug bit. No real effect if it's already 0.
+        sbrc YL, 0   // Skip the next instruction if usbSOFCount's bit 0 is 0.
+        sbi PORTC, 0 // Set the debug bit (only if usbSOFCount bit 0 is 1).
 
-#undef USB_SOF_HOOK
-macro realSOFHook
-    tuneOsccal
-    sofHookAssemblerMacro
-endm
-#define USB_SOF_HOOK                    realSOFHook
+        USB_SOF_HOOK
+    endm
 
+    #undef USB_SOF_HOOK
+    #define USB_SOF_HOOK realSOFHook
 #endif
 
 #endif /* __usbconfig_h_included__ */
