@@ -52,6 +52,7 @@ void setup()
 }
 
 static uint8_t sReports[2][64] = { 0 };
+static uint8_t sReportLengths[2] = { 0 };
 static const uint8_t sReportSize = sizeof(sReports[0]);
 static uint8_t sCurrentReport = 0;
 
@@ -117,8 +118,8 @@ static void prepareInputReport()
     // Prepare the input report in the Pro Controller's format.
     const uint8_t innerReportLength = prepareInputSubReportInBuffer(&report[2]);
 
-    // Fill the remainder of the buffer with 0.
-    memset(&report[2 + innerReportLength], 0, sReportSize - (2 + innerReportLength));
+    sReportLengths[sCurrentReport] = 2 + innerReportLength;
+    sReportPending = true;
 }
 
 static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *reportIn, uint8_t reportInLen)
@@ -132,7 +133,8 @@ static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *rep
     report[0] = reportId;
     report[1] = reportCommand;
     memcpy_P(&report[2], reportIn, reportInLen);
-    memset(&report[2 + reportInLen], 0, sReportSize - (2 + reportInLen));
+
+    sReportLengths[sCurrentReport] = 2 + reportInLen;
     sReportPending = true;
 }
 
@@ -169,6 +171,7 @@ static void reportUart_F(uint8_t ack, uint8_t subCommand, const uint8_t *reportI
         copyFunction(&report[reportSizeBeforeCopy], reportIn, reportInLen);
     }
 
+    sReportLengths[sCurrentReport] = reportSize;
     sReportPending = true;
 }
 
@@ -515,27 +518,30 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 static void sendReportBlocking()
 {
     const uint8_t reportIndex = sCurrentReport;
-    sCurrentReport = reportIndex == 0 ? 1 : 0;
+    const uint8_t *report = sReports[reportIndex];
+    const uint8_t actualReportLength = sReportLengths[reportIndex];
 
     // The next report can be filled in while we send this one.
     // This doesn't seem to happen very much.
+    sCurrentReport = (reportIndex + 1) % 2;
     sReportPending = false;
 
-    const uint8_t reportSize = sReportSize;
-    uint8_t *report = sReports[reportIndex];
     uint8_t reportCursor = 0;
+    uint8_t packetSize;
     do {
         PORTB |= (1 << 2);
         usbPoll();
         if(usbInterruptIsReady()) {
 
-            uint8_t bytesToSend = min(8, reportSize - reportCursor);
-            usbSetInterrupt(&report[reportCursor], bytesToSend);
-            reportCursor += bytesToSend;
+            packetSize = min(8, actualReportLength - reportCursor);
+            usbSetInterrupt(&((uchar *)report)[reportCursor], packetSize);
+            reportCursor += packetSize;
 
         }
         PORTB &= ~(1 << 2);
-    } while(reportCursor < reportSize);
+    } while(!(packetSize < 8 || reportCursor == sReportSize));
+
+    sReportLengths[reportIndex] = 0;
 }
 
 // Call regularly to blink the LED every 1 second.
