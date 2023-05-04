@@ -22,15 +22,35 @@ extern "C" {
 
 void setup()
 {
-    // We will use Port B bits 1-4 (pins 15-18) as 'debug' output, and
-    // bit 5 (pin 19) as our one-second-blinking 'status' LED.
-    // Configure them as output, and ensure they start as zero.
-    DDRB  |= 0b00111110;
-    PORTB &= 0b11000001;
+    // Set port 2 outputs:
+    DDRB  |=
+        1 << 3 | // PICO (PB3)
+        1 << 5 | // SCK (PB5)
+        1 << 2 | // PB2 for the controller's CS line
+        1 << 0   // PB0 for the blinking LED.
+    ;
 
-    DDRC  |= 0b00000001;
-    PORTC &= 0b11111110;
+    // Set up the SPI Control Register. Form right to left:
+    // SPIE = 0 (SPI interrupt disabled - we'll just poll)
+    // SPE  = 1 (SPI enabled)
+    // DORD = 1 (Data order: LSB of the data word is transmitted first)
+    // MSTR = 1 (Controller/Peripheral Select: Controller mode)
+    // CPOL = 1 (Clock Polarity: Leading edge = falling)
+    // CPHA = 1 (Clock Phase: Leading edge = setup, trailing ecdge = sample)
+    // SPR1 SPR0 = 10 (fosc / 64 = 12.8MHz / 64 = 200kHz - but we'll double below).
+    SPCR = 0b01111110;
 
+    // Double the SPI rate defined above (so 200kHz * 2 = 400kHz)
+    SPSR |= 1 << SPI2X;
+
+    // Pull-up for POCI.
+    // Maybe this will sometimes work - bit it's not good enough for me in testing.
+    // Really, a 1k external pull-up is required.
+    PORTB |= 1 << 4;
+
+    // Need to set the controller's CS to high so we can pull it low for each
+    // transaction - and PICO and SCK should rest at high too.
+    PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
 
     Serial.begin(250000);
 
@@ -216,13 +236,11 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         // Abandon reception of any in-progress reports - we're not going to
         // get the rest of it :-(
         accumulatedReportBytes = 0;
-        PORTB &= ~(1 << 4); // Debug signal that we've stopped processing a report.
         return;
     }
 
     if(accumulatedReportBytes == 0) {
         reportId = data[0];
-        PORTB |= (1 << 4); // Debug signal that we've started processing a report.
         debugPrint("\r\n\n");
     }
 
@@ -466,15 +484,11 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
     debugPrint(' ');
     debugPrint(OSCCAL, 16);
-
-    PORTB &= ~(1 << 4); // Debug signal that we've stopped processing a report.
 }
 
 void usbFunctionWriteOut(uchar *data, uchar len)
 {
-    PORTB |= (1 << 3);
     usbFunctionWriteOutOrAbandon(data, len, false);
-    PORTB &= ~(1 << 3);
 }
 
 void usbFunctionRxHook(const uchar *data, const uchar len)
@@ -529,7 +543,6 @@ static void sendReportBlocking()
     uint8_t reportCursor = 0;
     uint8_t packetSize;
     do {
-        PORTB |= (1 << 2);
         usbPoll();
         if(usbInterruptIsReady()) {
 
@@ -538,7 +551,6 @@ static void sendReportBlocking()
             reportCursor += packetSize;
 
         }
-        PORTB &= ~(1 << 2);
     } while(!(packetSize < 8 || reportCursor == sReportSize));
 
     sReportLengths[reportIndex] = 0;
@@ -554,9 +566,9 @@ static void ledHeartbeat()
         lastBeat = timeNow;
         sLedIsOn = !sLedIsOn;
         if(sLedIsOn) {
-            PORTB &= ~(1 << 5);
+            PORTB &= ~(1 << 0);
         } else {
-            PORTB |= (1 << 5);
+            PORTB |= (1 << 0);
         }
     }
 
@@ -567,8 +579,6 @@ static void ledHeartbeat()
 
 void loop()
 {
-    PORTB |= (1 << 1);
-
     ledHeartbeat();
     usbPoll();
 
@@ -580,6 +590,4 @@ void loop()
             sendReportBlocking();
         }
     }
-
-    PORTB &= ~(1 << 1);
 }

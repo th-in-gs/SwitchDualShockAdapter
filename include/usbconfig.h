@@ -379,24 +379,6 @@ section at the end of this file).
 
 #ifdef __ASSEMBLER__
     #include "osctune.h"
-
-    macro realSOFHook
-        // For debugging purposes, toggle bit 0 of PORTC on every SOF.
-        // Really don't want to spend much time doing this - we run the risk of
-        // causing V-USB to miss the real data packet that might be about to
-        // start.
-        // The just-incremented usbSOFCount is already in YL, so we can use
-        // YL's bit 0 to decide how to set the debug port bit to achieve a
-        // toggle without loading the current value.
-        cbi PORTC, 0 // Clear the debug bit. No real effect if it's already 0.
-        sbrc YL, 0   // Skip the next instruction if usbSOFCount's bit 0 is 0.
-        sbi PORTC, 0 // Set the debug bit (only if usbSOFCount bit 0 is 1).
-
-        USB_SOF_HOOK
-    endm
-
-    #undef USB_SOF_HOOK
-    #define USB_SOF_HOOK realSOFHook
 #endif
 
 #endif /* __usbconfig_h_included__ */
