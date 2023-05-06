@@ -22,12 +22,13 @@ extern "C" {
 
 void setup()
 {
-    // Set port 2 outputs:
-    DDRB  |=
-        1 << 3 | // PICO (PB3)
-        1 << 5 | // SCK (PB5)
-        1 << 2 | // PB2 for the controller's CS line
-        1 << 0   // PB0 for the blinking LED.
+    // Set port 2 outputs. Most of these pind are prescribed by the ATmega's
+    // built in SPI communication hardware.
+    DDRB |=
+        1 << 3 | // PICO (PB3) - Serial data from ATmega to controller.
+        1 << 5 | // SCK (PB5) - Serial data clock.
+        1 << 2 | // Use PB2 for the controller's ^CS line
+        1 << 0   // PB0 for our blinking LED.
     ;
 
     // Set up the SPI Control Register. Form right to left:
@@ -37,20 +38,17 @@ void setup()
     // MSTR = 1 (Controller/Peripheral Select: Controller mode)
     // CPOL = 1 (Clock Polarity: Leading edge = falling)
     // CPHA = 1 (Clock Phase: Leading edge = setup, trailing ecdge = sample)
-    // SPR1 SPR0 = 10 (fosc / 64 = 12.8MHz / 64 = 200kHz - but we'll double below).
+    // SPR1 SPR0 = 10 (Serial clock rate: 10 means (F_CPU / 64) -
+    //                 so: (12.8MHz / 64) = 200kHz - but we'll double that below).
     SPCR = 0b01111110;
 
     // Double the SPI rate defined above (so 200kHz * 2 = 400kHz)
     SPSR |= 1 << SPI2X;
 
-    // Pull-up for POCI.
-    // Maybe this will sometimes work - bit it's not good enough for me in testing.
-    // Really, a 1k external pull-up is required.
-    PORTB |= 1 << 4;
-
-    // Need to set the controller's CS to high so we can pull it low for each
-    // transaction - and PICO and SCK should rest at high too.
-    PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
+    // Need to set the controller's CS, which is active-low, to high so we can
+    // pull it low for each transaction - and PICO and SCK should rest at high
+    // too.
+    PORTB |= 1 << 5 | 1 << 3 | 1 << 2;
 
     Serial.begin(250000);
 
@@ -113,20 +111,155 @@ static void halt(uint8_t i, const char *message = NULL)
     while(true);
 }
 
-static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer)
+static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTransmitLength)
 {
-    buffer[0] = 0x81;
-    memset(&buffer[1], 0, 10);
+    // This is static because we return it to the caller.
+    static uint8_t toReceive[21] = {0};
+    uint8_t toReceiveLen = sizeof(toReceive);
 
-    // We'll alternately press the left and right dpad buttons for testing.
-    if(sLedIsOn) {
-        buffer[3] |= 0b100;
-    } else {
-        buffer[3] |= 0b1000;
+    // Pull-down the ~CS ('Attention') line.
+    PORTB &= ~(1 << 2);
+
+    // Give the controller time to notice.
+    delayMicroseconds(10);
+
+    // Loop using SPI to send/receive one byte at a time.
+    uint8_t byteIndex = 0;
+    do {
+        // Put what we want to send into the SPI Data Register.
+        if(byteIndex == 0) {
+            // All transactions start with a 1 byte.
+            SPDR = 0x01;
+        } else if(byteIndex <= toTransmitLength) {
+            // If we still have [part of] a command to transmit.
+            SPDR = pgm_read_byte(toTransmit + (byteIndex - 1));
+        } else {
+            // Otherwise, pad with 0s like a PS1 would.
+            SPDR = 0x00;
+        }
+
+        // Wait for the SPI hardware do its thing:
+        // Loop until SPIF, the SPI Interrupt Flag in the SPI State Register,
+        // is set, signifying the SPI transaction is complete.
+        while(!(SPSR & (1<<SPIF)));
+
+        // Grab the received byte from the SPI Date register.
+        // This has the side-effect of clearing the SPIF flag.
+        const uint8_t received = SPDR;
+
+        // Process what we've received.
+        if(byteIndex == 1) {
+            // The byte in position 1 contains the length to expect after
+            // the header.
+            toReceiveLen = min(toReceiveLen, ((received & 0xf) * 2) + 3);
+        }
+        if(byteIndex == 2) {
+            // This should always be 0x5a.
+            if(received != 0x5a) {
+                byteIndex = 0;
+                memset(toReceive, 0, sizeof(toReceive));
+                break;
+            }
+        }
+
+        toReceive[byteIndex] = received;
+        ++byteIndex;
+
+        if(byteIndex < toReceiveLen) {
+            // The Dual Shock requires us to wait a bit between packets.
+            delayMicroseconds(10);
+        }
+    } while(byteIndex < toReceiveLen);
+
+    // ~CS line ('Attention') needs to be raised to its inactive state between
+    // each transaction.
+    PORTB |= 1 << 2;
+
+    DualShockReport *receivedReport = (DualShockReport *)toReceive;
+    if(byteIndex <= offsetof(DualShockReport, rightStickX)) {
+        // If we didn't get any analog reports (the controller is in digital
+        // mode), set the analog sticks to centered.
+        receivedReport->rightStickX = 0x80;
+        receivedReport->rightStickY = 0x80;
+        receivedReport->leftStickX = 0x80;
+        receivedReport->leftStickY = 0x80;
     }
 
-    // Return how much of the buffer we've filled.
-    return 11;
+    return toReceive;
+}
+
+static uint8_t deadZonedStickPosition(uint8_t rawStickPosition)
+{
+    // Switch pro controller docs suggest the pro controller has a 10% radial
+    // dead zone:
+    //   https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/spi_flash_notes.md
+    // This does seem to feel okay? It's square though...
+    static const uint8_t deadZoneRadius = floor(0xff / 10);
+    static const uint8_t midPosition = 0x80;
+    if(rawStickPosition >= midPosition - deadZoneRadius && rawStickPosition <= midPosition + deadZoneRadius) {
+        return midPosition;
+    }
+    return rawStickPosition;
+}
+static void convertDualShockToSwitch(const DualShockReport *dualShockReport, SwitchReport *switchReport)
+{
+    memset(switchReport, 0, sizeof(SwitchReport));
+
+    // Fake values.
+    switchReport->connectionInfo = 0x1;
+    switchReport->batteryLevel = 0x8;
+
+    // Dual Shock buttons are 'active low' (0 = on, 1 = off), so we need to
+    // invert their value before assigning to the Switch report.
+
+    switchReport->yButton = !dualShockReport->squareButton;
+    switchReport->xButton = !dualShockReport->triangleButton;
+    switchReport->bButton = !dualShockReport->crossButton;
+    switchReport->aButton = !dualShockReport->circleButton;
+    switchReport->rShoulderButton = !dualShockReport->r1Button;
+    switchReport->zRShoulderButton = !dualShockReport->r2Button;
+
+    switchReport->minusButton = !dualShockReport->selectButton;
+    switchReport->plusButton = !dualShockReport->startButton;
+    switchReport->rStickButton = !dualShockReport->r3Button;
+    switchReport->lStickButton = !dualShockReport->l3Button;
+
+    switchReport->downButton = !dualShockReport->downButton;
+    switchReport->upButton = !dualShockReport->upButton;
+    switchReport->rightButton = !dualShockReport->rightButton;
+    switchReport->leftButton = !dualShockReport->leftButton;
+    switchReport->lShoulderButton = !dualShockReport->l1Button;
+    switchReport->zLShoulderButton = !dualShockReport->l2Button;
+
+
+    // The Switch has 12-bit analog sticks. The Dual Shock has 8-bit.
+    // We replicate the high 4 bits into the bottom 4 bits of the
+    // Switch report, so that e.g. 0xFF maps to 0XFFF and 0x00 maps to 0x000
+    // The mid-point of 0x80 maps to 0x808, which is a bit off - but
+    // 0x80 is in fact off too: the real midpoint of [0x00 - 0xff] is 0x7f.8
+    // (using a hexadecimal point there, like a decimal point).
+
+    const uint8_t leftStickX = deadZonedStickPosition(dualShockReport->leftStickX);
+    const uint8_t leftStickY = deadZonedStickPosition(0xff - dualShockReport->leftStickY);
+    switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
+    switchReport->leftStick[1] = (leftStickX >> 4) | (leftStickY & 0xf0);
+    switchReport->leftStick[2] = leftStickY;
+
+    const uint8_t rightStickX = deadZonedStickPosition(dualShockReport->rightStickX);
+    const uint8_t rightStickY = deadZonedStickPosition(0xff - dualShockReport->rightStickY);
+    switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
+    switchReport->rightStick[1] = (rightStickX >> 4) | (rightStickY & 0xf0);
+    switchReport->rightStick[2] = rightStickY;
+}
+
+static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer)
+{
+    static const PROGMEM uint8_t toTransmit[] = { 0x42 };
+    const uint8_t *received = sampleDualShock_P(toTransmit, sizeof(toTransmit));
+
+    convertDualShockToSwitch((const DualShockReport *)received, (SwitchReport *)buffer);
+
+    return sizeof(SwitchReport);
 }
 
 static void prepareInputReport()
