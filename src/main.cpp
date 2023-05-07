@@ -188,7 +188,7 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
     return toReceive;
 }
 
-static void deadZoneStickPosition(uint8_t *x, uint8_t *y) {
+static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
     const int16_t xDiff = (int16_t)*x - 0x80;
     const int16_t yDiff = (int16_t)*y - 0x80;
     const int16_t distance_squared = (xDiff * xDiff) + (yDiff * yDiff);
@@ -245,14 +245,14 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
 
     uint8_t leftStickX = dualShockReport->leftStickX;
     uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
-    deadZoneStickPosition(&leftStickX, &leftStickY);
+    deadZoneizeStickPosition(&leftStickX, &leftStickY);
     switchReport->leftStick[2] = leftStickY;
     switchReport->leftStick[1] = (leftStickY & 0xf0) | (leftStickX >> 4);
     switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
 
     uint8_t rightStickX = dualShockReport->rightStickX;
     uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
-    deadZoneStickPosition(&rightStickX, &rightStickY);
+    deadZoneizeStickPosition(&rightStickX, &rightStickY);
     switchReport->rightStick[2] = rightStickY;
     switchReport->rightStick[1] = (rightStickY & 0xf0) | (rightStickX >> 4);
     switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
@@ -281,7 +281,7 @@ static void prepareInputReport()
     sReportPending = true;
 }
 
-static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *reportIn, uint8_t reportInLen)
+static void prepareRegularReplyReport_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *reportIn, uint8_t reportInLen)
 {
     if(sReportPending) {
         halt(0, "Report Clash");
@@ -297,7 +297,7 @@ static void report_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *rep
     sReportPending = true;
 }
 
-static void reportUart_F(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen,  void *(*copyFunction)(void *, const void *, size_t))
+static void prepareUartReplyReport_F(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen,  void *(*copyFunction)(void *, const void *, size_t))
 {
     // '_F' - means pass in function to use for memcpying.
 
@@ -334,17 +334,17 @@ static void reportUart_F(uint8_t ack, uint8_t subCommand, const uint8_t *reportI
     sReportPending = true;
 }
 
-static void reportUart_P(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen)
+static void prepareUartReplyReport_P(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen)
 {
-    return reportUart_F(ack, subCommand, reportIn, reportInLen, memcpy_P);
+    return prepareUartReplyReport_F(ack, subCommand, reportIn, reportInLen, memcpy_P);
 }
 
-static void reportUart(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen)
+static void prepareUartReplyReport(uint8_t ack, uint8_t subCommand, const uint8_t *reportIn, uint8_t reportInLen)
 {
-    return reportUart_F(ack, subCommand, reportIn, reportInLen, memcpy);
+    return prepareUartReplyReport_F(ack, subCommand, reportIn, reportInLen, memcpy);
 }
 
-static void reportUartSpi_P(uint16_t address, uint8_t length, const uint8_t *replyData, uint8_t replyDataLength)
+static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t length, const uint8_t *replyData, uint8_t replyDataLength)
 {
     if(replyDataLength != length) {
         Serial.print(address, 16);
@@ -361,7 +361,7 @@ static void reportUartSpi_P(uint16_t address, uint8_t length, const uint8_t *rep
     buffer[4] = (uint8_t)(replyDataLength);
     memcpy_P(&buffer[5], replyData, replyDataLength);
 
-    return reportUart(0x90, 0x10, buffer, bufferLength);
+    return prepareUartReplyReport(0x90, 0x10, buffer, bufferLength);
 }
 
 static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAbandonAccumulatedReport)
@@ -461,10 +461,10 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         case 0x01: {
             // Request controller info inc. MAC address
             static const PROGMEM uint8_t reply[] = { 0x00, 0x03, 0x43, 0x23, 0x53, 0x22, 0xa3, 0xc7 };
-            report_P(0x81, command, reply, sizeof(reply));
+            prepareRegularReplyReport_P(0x81, command, reply, sizeof(reply));
         } break;
         case 0x02:
-            report_P(0x81, command, NULL, 0);
+            prepareRegularReplyReport_P(0x81, command, NULL, 0);
             break;
         default:
             debugPrint('?');
@@ -481,7 +481,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         switch(uartCommand) {
         case 0x01: {
             // Bluetooth manual pairing (?)
-            reportUart_P(0x81, uartCommand, NULL, 0);
+            prepareUartReplyReport_P(0x81, uartCommand, NULL, 0);
         } break;
         case 0x02: {
             // Request device info
@@ -493,10 +493,11 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 0x03, // Unknown
                 0x01, // 0x01 = Use colors from SPI (below).
             };
-            reportUart_P(0x82, uartCommand, reply, sizeof(reply));
+            prepareUartReplyReport_P(0x82, uartCommand, reply, sizeof(reply));
         } break;
         case 0x10: {
-            // NVRAM read
+            // 'SPI' NVRAM read
+            // ('SPI' because it's NVRAM connected by SPI in a real Pro Controller)
             const uint16_t address = reportIn[11] | reportIn[12] << 8;
             const uint16_t length = reportIn[15];
             debugPrint('<');
@@ -551,18 +552,18 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 halt(address & 0xff, "Unexpected SPI read subcommand");
                 break;
             }
-            reportUartSpi_P(address, length, spiReply, spiReplyLength);
+            prepareUartSpiReplyReport_P(address, length, spiReply, spiReplyLength);
         } break;
         case 0x04: // Trigger buttons elapsed time (?)
-            reportUart_P(0x83, uartCommand, NULL, 0);
+            prepareUartReplyReport_P(0x83, uartCommand, NULL, 0);
             break;
         case 0x48: // Set vibration enabled state
-            reportUart_P(0x82, uartCommand, NULL, 0);
+            prepareUartReplyReport_P(0x82, uartCommand, NULL, 0);
             break;
         case 0x21: {// Set NFC/IR MCU config
             // Request device info
             static const PROGMEM uint8_t reply[] = { 0x01, 0x00, 0xFF, 0x00, 0x08, 0x00, 0x1B, 0x01 };
-            reportUart_P(0xa0, uartCommand, reply, sizeof(reply));
+            prepareUartReplyReport_P(0xa0, uartCommand, reply, sizeof(reply));
         } break;
         case 0x00: // Do nothing (return report)
         case 0x03: // Set input report mode
@@ -573,10 +574,10 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         case 0x40: // Set IMU enabled state
         case 0x41: // Set IMU sesitivity
             // Unhandled, but we'll tell the switch we've handled it...
-            reportUart_P(0x80, uartCommand, NULL, 0);
+            prepareUartReplyReport_P(0x80, uartCommand, NULL, 0);
             break;
         default:
-            reportUart_P(0x80, uartCommand, NULL, 0);
+            prepareUartReplyReport_P(0x80, uartCommand, NULL, 0);
             halt(uartCommand, "Unexpected UART subcommand");
             break;
         }
