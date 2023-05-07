@@ -193,9 +193,9 @@ static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
     const int16_t yDiff = (int16_t)*y - 0x80;
     const int16_t distance_squared = (xDiff * xDiff) + (yDiff * yDiff);
 
-    static const int16_t deadZoneRadiusSquared = floor(0xff / 10);
+    static const int16_t deadZoneRadiusSquared = pow(ceil(0xff / 10), 2);
 
-    if (distance_squared < deadZoneRadiusSquared) {
+    if (distance_squared <= deadZoneRadiusSquared) {
         *x = 0x80;
         *y = 0x80;
     }
