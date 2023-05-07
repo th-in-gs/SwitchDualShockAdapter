@@ -33,7 +33,7 @@ section at the end of this file).
 /* This is the bit number in USB_CFG_IOPORT where the USB D- line is connected.
  * This may be any bit in the port.
  */
-#define USB_CFG_DPLUS_BIT       4
+#define USB_CFG_DPLUS_BIT       3
 /* This is the bit number in USB_CFG_IOPORT where the USB D+ line is connected.
  * This may be any bit in the port. Please note that D+ must also be connected
  * to interrupt pin INT0! [You can also use other interrupts, see section
@@ -85,7 +85,7 @@ section at the end of this file).
  * configured below) and a catch-all default interrupt-in endpoint as above.
  * You must also define USB_CFG_HAVE_INTRIN_ENDPOINT to 1 for this feature.
  */
-#define USB_CFG_EP3_NUMBER              0
+#define USB_CFG_EP3_NUMBER              3
 /* If the so-called endpoint 3 is used, it can now be configured to any other
  * endpoint number (except 0) with this macro. Default if undefined is 3.
  */
@@ -118,7 +118,7 @@ section at the end of this file).
 /* Define this to 1 if the device has its own power supply. Set it to 0 if the
  * device is powered from the USB bus.
  */
-#define USB_CFG_MAX_BUS_POWER           500
+#define USB_CFG_MAX_BUS_POWER           100
 /* Set this variable to the maximum USB bus power consumption of your device.
  * The value is in milliamperes. [It will be divided by two since USB
  * communicates power requirements in units of 2 mA.]
@@ -155,7 +155,6 @@ section at the end of this file).
  * in a single control-in or control-out transfer. Note that the capability
  * for long transfers increases the driver size.
  */
-
 #define USB_RX_USER_HOOK(data, len)    { void usbFunctionRxHook(const unsigned char *data, const unsigned char len); usbFunctionRxHook(data, len); }
 /* This macro is a hook if you want to do unconventional things. If it is
  * defined, it's inserted at the beginning of received message processing.
@@ -208,7 +207,7 @@ section at the end of this file).
 /* define this macro to 1 if you want the function usbMeasureFrameLength()
  * compiled in. This function can be used to calibrate the AVR's RC oscillator.
  */
-#define USB_USE_FAST_CRC                1
+#define USB_USE_FAST_CRC                0
 /* The assembler module has two implementations for the CRC algorithm. One is
  * faster, the other is smaller. This CRC routine is only used for transmitted
  * messages where timing is not critical. The faster routine needs 31 cycles
@@ -222,24 +221,24 @@ section at the end of this file).
 /* Use these free descriptors, and define a unique serial number (see "USB-IDs-for-free.txt"
  * 10204 (0x27dc) | 5824 (0x16c0) | For USB Joysticks
  */
-#define  USB_CFG_VENDOR_ID       0x7e, 0x05 /* 0x057e */
+#define USB_CFG_VENDOR_ID        0x7e, 0x05 /* 0x057e */
 /* USB vendor ID for the device, low byte first. If you have registered your
  * own Vendor ID, define it here. Otherwise you may use one of obdev's free
  * shared VID/PID pairs. Be sure to read USB-IDs-for-free.txt for rules!
  */
-#define  USB_CFG_DEVICE_ID       0x09, 0x20 /* 0x2009 */ 
+#define USB_CFG_DEVICE_ID        0x09, 0x20 /* 0x2009 */
 /* This is the ID of the product, low byte first. It is interpreted in the
  * scope of the vendor ID. If you have registered your own VID with usb.org
  * or if you have licensed a PID from somebody else, define it here. Otherwise
  * you may use one of obdev's free shared VID/PID pairs. See the file
  * USB-IDs-for-free.txt for details!
  */
-#define USB_CFG_DEVICE_VERSION   0x00, 0x02 /* 0x0200 */ 
+#define USB_CFG_DEVICE_VERSION   0x00, 0x02 /* 0x0200 */
 /* Version number of the device: Minor number first, then major number.
  */
 
-#define USB_CFG_VENDOR_NAME     'N','i','n','t','e','n','d','o',' ','C','o','.',',',' ','L','t','d','.'
-#define USB_CFG_VENDOR_NAME_LEN 18
+#define USB_CFG_VENDOR_NAME      'N','i','n','t','e','n','d','o',' ','C','o','.',',',' ','L','t','d','.'
+#define USB_CFG_VENDOR_NAME_LEN  18
 /* These two values define the vendor name returned by the USB device. The name
  * must be given as a list of characters under single quotes. The characters
  * are interpreted as Unicode (UTF-16) entities.
@@ -248,8 +247,8 @@ section at the end of this file).
  * obdev's free shared VID/PID pair. See the file USB-IDs-for-free.txt for
  * details.
  */
-#define USB_CFG_DEVICE_NAME     'P','r','o',' ','C','o','n','t','r','o','l','l','e','r'
-#define USB_CFG_DEVICE_NAME_LEN 14
+#define USB_CFG_DEVICE_NAME      'P','r','o',' ','C','o','n','t','r','o','l','l','e','r'
+#define USB_CFG_DEVICE_NAME_LEN  14
 /* Same as above for the device name. If you don't want a device name, undefine
  * the macros. See the file USB-IDs-for-free.txt before you assign a name if
  * you use a shared VID/PID.
@@ -378,6 +377,8 @@ section at the end of this file).
 /* #define USB_INTR_PENDING_BIT    INTF0 */
 /* #define USB_INTR_VECTOR         INT0_vect */
 
-#include "osctune.h"
+#ifdef __ASSEMBLER__
+    #include "osctune.h"
+#endif
 
 #endif /* __usbconfig_h_included__ */

@@ -33,7 +33,7 @@ typedef struct SwitchReport {
     int shoulderLeftLeftButton:1;
     int lShoulderButton:1;
     int zLShoulderButton:1;
-    
+
     uint8_t leftStick[3];
     uint8_t rightStick[3];
     uint8_t vibrationReport;
@@ -67,6 +67,5 @@ typedef struct DualShockReport {
     uint8_t leftStickX;
     uint8_t leftStickY;
 } DualShockReport;
-
 
 #endif
