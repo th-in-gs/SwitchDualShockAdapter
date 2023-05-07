@@ -312,7 +312,7 @@ static void reportUart_F(uint8_t ack, uint8_t subCommand, const uint8_t *reportI
     uint8_t reportSize = 4 + inputBufferLength;
 
     if(reportInLen == 0) {
-        report[4 + inputBufferLength] = 0x00;
+        report[reportSize] = 0x00;
         ++reportSize;
     } else {
         const uint8_t reportSizeBeforeCopy = reportSize;
@@ -531,12 +531,12 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
             } break;
-            case 0x8010: { // 8010 - 8025: User stick calibration
+            case 0x8010: { // User stick calibration
                 static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb2, 0xa1 };
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
             } break;
-            case 0x8028: { // six axis calibration.
+            case 0x8028: { // Six axis calibration.
                 static const PROGMEM uint8_t reply[] = { 0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe, 0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b };
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
@@ -714,13 +714,10 @@ void loop()
 {
     ledHeartbeat();
     usbPoll();
-
     if(usbInterruptIsReady()) {
-        if(sReportPending) {
-            sendReportBlocking();
-        } else if(!sInputReportsSuspended) {
+        if(!sReportPending) {
             prepareInputReport();
-            sendReportBlocking();
         }
+        sendReportBlocking();
     }
 }
