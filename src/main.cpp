@@ -188,19 +188,19 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
     return toReceive;
 }
 
-static uint8_t deadZonedStickPosition(uint8_t rawStickPosition)
-{
-    // Switch pro controller docs suggest the pro controller has a 10% radial
-    // dead zone:
-    //   https://github.com/dekuNukem/Nintendo_Switch_Reverse_Engineering/blob/master/spi_flash_notes.md
-    // This does seem to feel okay? It's square though...
-    static const uint8_t deadZoneRadius = floor(0xff / 10);
-    static const uint8_t midPosition = 0x80;
-    if(rawStickPosition >= midPosition - deadZoneRadius && rawStickPosition <= midPosition + deadZoneRadius) {
-        return midPosition;
+static void deadZoneStickPosition(uint8_t *x, uint8_t *y) {
+    const int16_t xDiff = (int16_t)*x - 0x80;
+    const int16_t yDiff = (int16_t)*y - 0x80;
+    const int16_t distance_squared = (xDiff * xDiff) + (yDiff * yDiff);
+
+    static const int16_t deadZoneRadiusSquared = floor(0xff / 10);
+
+    if (distance_squared < deadZoneRadiusSquared) {
+        *x = 0x80;
+        *y = 0x80;
     }
-    return rawStickPosition;
 }
+
 static void convertDualShockToSwitch(const DualShockReport *dualShockReport, SwitchReport *switchReport)
 {
     memset(switchReport, 0, sizeof(SwitchReport));
@@ -238,18 +238,24 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     // The mid-point of 0x80 maps to 0x808, which is a bit off - but
     // 0x80 is in fact off too: the real midpoint of [0x00 - 0xff] is 0x7f.8
     // (using a hexadecimal point there, like a decimal point).
+    //
+    // Byte (nybble?) order of the values here strikes me as a bit weird.
+    // If the three bytes (with two nybbles each) are AB CD EF,
+    // the decoded 12-bit values are DAB, EFC. It makes more sense 'backwards'?
 
-    const uint8_t leftStickX = deadZonedStickPosition(dualShockReport->leftStickX);
-    const uint8_t leftStickY = deadZonedStickPosition(0xff - dualShockReport->leftStickY);
-    switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
-    switchReport->leftStick[1] = (leftStickX >> 4) | (leftStickY & 0xf0);
+    uint8_t leftStickX = dualShockReport->leftStickX;
+    uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
+    deadZoneStickPosition(&leftStickX, &leftStickY);
     switchReport->leftStick[2] = leftStickY;
+    switchReport->leftStick[1] = (leftStickY & 0xf0) | (leftStickX >> 4);
+    switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
 
-    const uint8_t rightStickX = deadZonedStickPosition(dualShockReport->rightStickX);
-    const uint8_t rightStickY = deadZonedStickPosition(0xff - dualShockReport->rightStickY);
-    switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
-    switchReport->rightStick[1] = (rightStickX >> 4) | (rightStickY & 0xf0);
+    uint8_t rightStickX = dualShockReport->rightStickX;
+    uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
+    deadZoneStickPosition(&rightStickX, &rightStickY);
     switchReport->rightStick[2] = rightStickY;
+    switchReport->rightStick[1] = (rightStickY & 0xf0) | (rightStickX >> 4);
+    switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
 }
 
 static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer)
