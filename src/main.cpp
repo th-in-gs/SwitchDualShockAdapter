@@ -69,12 +69,14 @@ void setup()
     interrupts();
 }
 
-static uint8_t sReports[2][64] = { 0 };
-static uint8_t sReportLengths[2] = { 0 };
-static const uint8_t sReportSize = sizeof(sReports[0]);
-static uint8_t sCurrentReport = 0;
+static const uint8_t sReportSize = 64;
 
+static uint8_t sReports[2][sReportSize];
+static uint8_t sReportsInputReportPosition[2] = { 0 };
+static uint8_t sReportLengths[2] = { 0 };
+static uint8_t sCurrentReport = 0;
 static bool sReportPending = false;
+
 static bool sInputReportsSuspended = false;
 static bool sLedIsOn = true;
 
@@ -258,14 +260,12 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
 }
 
-static uint8_t prepareInputSubReportInBuffer(uint8_t *buffer)
+static void prepareInputSubReportInBuffer(uint8_t *buffer)
 {
     static const PROGMEM uint8_t toTransmit[] = { 0x42 };
     const uint8_t *received = sampleDualShock_P(toTransmit, sizeof(toTransmit));
 
     convertDualShockToSwitch((const DualShockReport *)received, (SwitchReport *)buffer);
-
-    return sizeof(SwitchReport);
 }
 
 static void prepareInputReport()
@@ -274,10 +274,8 @@ static void prepareInputReport()
     report[0] = 0x30;
     report[1] = usbSofCount;
 
-    // Prepare the input report in the Pro Controller's format.
-    const uint8_t innerReportLength = prepareInputSubReportInBuffer(&report[2]);
-
-    sReportLengths[sCurrentReport] = 2 + innerReportLength;
+    sReportsInputReportPosition[sCurrentReport] = 2;
+    sReportLengths[sCurrentReport] = 2 + sizeof(SwitchReport);
     sReportPending = true;
 }
 
@@ -306,31 +304,30 @@ static void prepareUartReplyReport_F(uint8_t ack, uint8_t subCommand, const uint
         return;
     }
 
+    uint8_t reportLength = 0;
     uint8_t *report = sReports[sCurrentReport];
-    report[0] = 0x21;
-    report[1] = usbSofCount;
+    report[reportLength++] = 0x21;
+    report[reportLength++] = usbSofCount;
 
-    const uint8_t inputBufferLength = prepareInputSubReportInBuffer(&report[2]);
+    sReportsInputReportPosition[sCurrentReport] = reportLength;
+    reportLength += sizeof(SwitchReport);
 
-    report[2 + inputBufferLength] = ack;
-    report[3 + inputBufferLength] = subCommand;
-
-    uint8_t reportSize = 4 + inputBufferLength;
+    report[reportLength++] = ack;
+    report[reportLength++] = subCommand;
 
     if(reportInLen == 0) {
-        report[reportSize] = 0x00;
-        ++reportSize;
+        report[reportLength++] = 0x00;
     } else {
-        const uint8_t reportSizeBeforeCopy = reportSize;
-        reportSize += reportInLen;
-        if(reportSize > sReportSize) {
+        const uint8_t reportSizeBeforeCopy = reportLength;
+        reportLength += reportInLen;
+        if(reportLength > sReportSize) {
             halt(0, "Report Too Big");
             return;
         }
         copyFunction(&report[reportSizeBeforeCopy], reportIn, reportInLen);
     }
 
-    sReportLengths[sCurrentReport] = reportSize;
+    sReportLengths[sCurrentReport] = reportLength;
     sReportPending = true;
 }
 
@@ -672,28 +669,46 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
 static void sendReportBlocking()
 {
     const uint8_t reportIndex = sCurrentReport;
-    const uint8_t *report = sReports[reportIndex];
-    const uint8_t actualReportLength = sReportLengths[reportIndex];
-
     // The next report can be filled in while we send this one.
     // This doesn't seem to happen very much.
     sCurrentReport = (reportIndex + 1) % 2;
     sReportPending = false;
 
+    uint8_t *report = sReports[reportIndex];
+    const uint8_t inputReportPosition = sReportsInputReportPosition[reportIndex];
+    const uint8_t actualReportLength = sReportLengths[reportIndex];
+
     uint8_t reportCursor = 0;
     uint8_t packetSize;
     do {
         usbPoll();
+
         if(usbInterruptIsReady()) {
-
             packetSize = min(8, actualReportLength - reportCursor);
-            usbSetInterrupt(&((uchar *)report)[reportCursor], packetSize);
-            reportCursor += packetSize;
+            const uint8_t nextReportCursor = reportCursor + packetSize;
 
+            // Prepare the input report at the last moment to ensure low latency.
+            if(inputReportPosition != 0 &&
+               inputReportPosition >= reportCursor &&
+               inputReportPosition < nextReportCursor) {
+                // We don't take long to prepare a report, so we can wait until
+                // the next ms to supply our reply - we do that by waiting until
+                // the next USB frame.
+                const uint8_t sofWhenInterruptReady = usbSofCount;
+                while(sofWhenInterruptReady == usbSofCount) {
+                    usbPoll();
+                }
+                prepareInputSubReportInBuffer(report + inputReportPosition);
+            }
+
+            usbSetInterrupt(&report[reportCursor], packetSize);
+
+            reportCursor = nextReportCursor;
         }
     } while(!(packetSize < 8 || reportCursor == sReportSize));
 
     sReportLengths[reportIndex] = 0;
+    sReportsInputReportPosition[reportIndex] = 0;
 }
 
 // Call regularly to blink the LED every 1 second.
