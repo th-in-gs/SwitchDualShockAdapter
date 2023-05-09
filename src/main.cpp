@@ -48,7 +48,8 @@ void setup()
     // Need to set the controller's CS, which is active-low, to high so we can
     // pull it low for each transaction - and PICO and SCK should rest at high
     // too.
-    PORTB |= 1 << 5 | 1 << 3 | 1 << 2;
+    // Also set the LED pin high (which will switch it off).
+    PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
 
     Serial.begin(250000);
 
@@ -78,9 +79,6 @@ static uint8_t sCurrentReport = 0;
 static bool sReportPending = false;
 
 static bool sInputReportsSuspended = false;
-static bool sLedIsOn = true;
-
-static unsigned long sLastSwitchPacketMillis = 0;
 
 static const uint8_t sCommandHistoryLength = 32;
 static uint8_t sCommandHistory[sCommandHistoryLength][3] = {0};
@@ -613,11 +611,6 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         sCommandHistory[sCommandHistoryCursor][2] = uartCommand;
     }
 
-    // If we don't see packets for a while, something's gone wrong.
-    // We check this elsewhere to be sure packets are continuning to be
-    // received.
-    sLastSwitchPacketMillis = millis();
-
     // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
     debugPrint(' ');
     debugPrint(OSCCAL, 16);
@@ -666,69 +659,38 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
     return 0;
 }
 
-static void sendReportBlocking()
-{
-    const uint8_t reportIndex = sCurrentReport;
-    // The next report can be filled in while we send this one.
-    // This doesn't seem to happen very much.
-    sCurrentReport = (reportIndex + 1) % 2;
-    sReportPending = false;
+#if DEBUG_PRINT_ON
+static uint8_t transmittedReportsCount = 0;
+#endif
 
-    uint8_t *report = sReports[reportIndex];
-    const uint8_t inputReportPosition = sReportsInputReportPosition[reportIndex];
-    const uint8_t actualReportLength = sReportLengths[reportIndex];
-
-    uint8_t reportCursor = 0;
-    uint8_t packetSize;
-    do {
-        usbPoll();
-
-        if(usbInterruptIsReady()) {
-            packetSize = min(8, actualReportLength - reportCursor);
-            const uint8_t nextReportCursor = reportCursor + packetSize;
-
-            // Prepare the input report at the last moment to ensure low latency.
-            if(inputReportPosition != 0 &&
-               inputReportPosition >= reportCursor &&
-               inputReportPosition < nextReportCursor) {
-                // We don't take long to prepare a report, so we can wait until
-                // the next ms to supply our reply - we do that by waiting until
-                // the next USB frame.
-                const uint8_t sofWhenInterruptReady = usbSofCount;
-                while(sofWhenInterruptReady == usbSofCount) {
-                    usbPoll();
-                }
-                prepareInputSubReportInBuffer(report + inputReportPosition);
-            }
-
-            usbSetInterrupt(&report[reportCursor], packetSize);
-
-            reportCursor = nextReportCursor;
-        }
-    } while(!(packetSize < 8 || reportCursor == sReportSize));
-
-    sReportLengths[reportIndex] = 0;
-    sReportsInputReportPosition[reportIndex] = 0;
-}
-
-// Call regularly to blink the LED every 1 second.
+// Call regularly to blink the LED every 1 second, if the USB connection is
+// active.
 static void ledHeartbeat()
 {
-    static unsigned long lastBeat = 0;
+    static uint8_t quarterSecondCount = 0;
+    static uint8_t lastQuarterSofCount = 0;
+    static uint8_t lastLedToggleQuarterSecondCount = 0;
 
-    unsigned long timeNow = millis();
-    if(timeNow - lastBeat >= 1000) {
-        lastBeat = timeNow;
-        sLedIsOn = !sLedIsOn;
-        if(sLedIsOn) {
+    uint8_t timeNow = usbSofCount;
+    if((uint8_t)(timeNow - lastQuarterSofCount) == 250) {
+        ++quarterSecondCount;
+        lastQuarterSofCount = timeNow;
+    }
+
+    if((uint8_t)(quarterSecondCount - lastLedToggleQuarterSecondCount) == 4) {
+        lastLedToggleQuarterSecondCount = quarterSecondCount;
+        bool ledIsOn = ((PORTB & (1 << 0)) != 0);
+        if(ledIsOn) {
             PORTB &= ~(1 << 0);
         } else {
             PORTB |= (1 << 0);
         }
-    }
 
-    if(sLastSwitchPacketMillis != 0 && timeNow - sLastSwitchPacketMillis > 5000) {
-        halt(timeNow - sLastSwitchPacketMillis, "Packets stopped!");
+#if DEBUG_PRINT_ON
+        Serial.println("FPS: ");
+        Serial.println(transmittedReportsCount, 10);
+        transmittedReportsCount = 0;
+#endif
     }
 }
 
@@ -736,10 +698,82 @@ void loop()
 {
     ledHeartbeat();
     usbPoll();
+
     if(usbInterruptIsReady()) {
-        if(!sReportPending) {
-            prepareInputReport();
+        // Although V-USB is ready for us to give it the packet to transmit on
+        // the next interrupt, we need less than 1ms to prepare, so we can wait
+        // until the next 1ms SOF is received before preparing the packet for
+        // a _little_ bit lower latency.
+        
+        static uint8_t preparePacketAtSofCount = 0;
+        const uint8_t thisSofCount = usbSofCount;
+        if(!((uint8_t)(preparePacketAtSofCount - thisSofCount) <= 1)) {
+            // We haven't already scheduled packet preparation, so schedule it
+            // for the next SOF.
+            preparePacketAtSofCount = thisSofCount + 1;
+        } else if(thisSofCount == preparePacketAtSofCount) {
+            // It's time to provide a packet to V-USB.
+
+            // It takes multiple interrupts to send one report, so we keep track
+            // of the report we're sending, and our position within it, in these
+            // static variables.
+            static uint8_t transmittingReportIndex = 0;
+            static uint8_t *transmittingReport = NULL;
+            static uint8_t transmittingReportLength = 0;
+            static uint8_t transmittingReportInputReportPosition = 0;
+            static uint8_t transmittingReportTranmissionCursor = 0;
+
+            if(transmittingReport == NULL) {
+                if(!sReportPending) {
+                    // If there's no report already pending (i.e. no prepared
+                    // reply to a command sent by the Switch), prepare
+                    // a plain input report.
+                    prepareInputReport();
+                }
+
+                transmittingReportIndex = sCurrentReport;
+                transmittingReport = sReports[transmittingReportIndex];
+                transmittingReportLength = sReportLengths[transmittingReportIndex];
+                transmittingReportInputReportPosition = sReportsInputReportPosition[transmittingReportIndex];
+                transmittingReportTranmissionCursor = 0;
+
+                // If the Switch sends a command while we're sending this
+                // report, the reply to it can be prepared while we're sending
+                // this report.
+                // This doesn't seem to happen very much.
+                sCurrentReport = (transmittingReportIndex + 1) % 2;
+                sReportPending = false;
+            }
+
+            // Low-speed USB can only sent up to eight bytes at a time.
+            const uint8_t packetSize = min(8, transmittingReportLength - transmittingReportTranmissionCursor);
+            const uint8_t nextReportTransmissionCursor = transmittingReportTranmissionCursor + packetSize;
+
+            if(transmittingReportInputReportPosition != 0 &&
+               transmittingReportInputReportPosition >= transmittingReportTranmissionCursor &&
+               transmittingReportInputReportPosition < nextReportTransmissionCursor) {
+                // We prepare the actual input part of the report - i.e. the
+                // state of the Dual Shock's controls - at the last minute
+                // in an attempt to get the lowest possible latency.
+                prepareInputSubReportInBuffer(transmittingReport + transmittingReportInputReportPosition);
+            }
+
+            // Actually provide the packet to V-USB to be sent when the next
+            // interrupt arrives.
+            usbSetInterrupt(&transmittingReport[transmittingReportTranmissionCursor], packetSize);
+
+            transmittingReportTranmissionCursor = nextReportTransmissionCursor;
+
+            if(packetSize < 8 || transmittingReportTranmissionCursor == sReportSize) {
+                // We've reached the end of this report.
+                sReportLengths[transmittingReportIndex] = 0;
+                sReportsInputReportPosition[transmittingReportIndex] = 0;
+                transmittingReport = NULL;
+
+#if DEBUG_PRINT_ON
+                ++transmittedReportsCount;
+#endif
+            }
         }
-        sendReportBlocking();
     }
 }
