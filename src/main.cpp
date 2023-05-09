@@ -270,7 +270,7 @@ static void prepareInputReport()
 {
     uint8_t *report = sReports[sCurrentReport];
     report[0] = 0x30;
-    report[1] = usbSofCount;
+    report[1] = usbSofCount; // This is meant to be an increasing timestamp - the SOF count is just a handy available 1ms counter.
 
     sReportsInputReportPosition[sCurrentReport] = 2;
     sReportLengths[sCurrentReport] = 2 + sizeof(SwitchReport);
@@ -687,7 +687,7 @@ static void ledHeartbeat()
         }
 
 #if DEBUG_PRINT_ON
-        Serial.println("FPS: ");
+        Serial.println("\nFPS: ");
         Serial.println(transmittedReportsCount, 10);
         transmittedReportsCount = 0;
 #endif
@@ -704,7 +704,7 @@ void loop()
         // the next interrupt, we need less than 1ms to prepare, so we can wait
         // until the next 1ms SOF is received before preparing the packet for
         // a _little_ bit lower latency.
-        
+
         static uint8_t preparePacketAtSofCount = 0;
         const uint8_t thisSofCount = usbSofCount;
         if(!((uint8_t)(preparePacketAtSofCount - thisSofCount) <= 1)) {
