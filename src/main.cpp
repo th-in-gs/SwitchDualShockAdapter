@@ -45,13 +45,16 @@ void setup()
     // Double the SPI rate defined above (so 200kHz * 2 = 400kHz)
     SPSR |= 1 << SPI2X;
 
+    MCUCR |= 1 << ISC11 | 1 << ISC10;
+    GICR |= 1 << INT1;
+
     // Need to set the controller's CS, which is active-low, to high so we can
     // pull it low for each transaction - and PICO and SCK should rest at high
     // too.
     // Also set the LED pin high (which will switch it off).
     PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
 
-    Serial.begin(250000);
+    Serial.begin(266667);
 
     // Disable interrupts for USB reset.
     noInterrupts();
@@ -111,28 +114,38 @@ static void halt(uint8_t i, const char *message = NULL)
     while(true);
 }
 
-static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTransmitLength)
+// The Dual Shock's ACK line is connected to pin 5, INT1.
+static volatile bool sDualShockAcknowledgeReceived = false;
+ISR(INT1_vect, ISR_NOBLOCK)
 {
-    // This is static because we return it to the caller.
-    static uint8_t toReceive[21] = {0};
-    uint8_t toReceiveLen = sizeof(toReceive);
+    // Set the flag so that the main code can know it's done.
+    sDualShockAcknowledgeReceived = true;
+}
 
+static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandLength,
+    uint8_t *toReceive, const uint8_t toReceiveLength)
+{
     // Pull-down the ~CS ('Attention') line.
     PORTB &= ~(1 << 2);
 
-    // Give the controller time to notice.
-    delayMicroseconds(10);
+    // Give the controller a little time to notice (this seems to be necessary
+    // for reliable communication).
+    delayMicroseconds(20);
 
-    // Loop using SPI to send/receive one byte at a time.
+    // Loop using SPI to send/receive each byte in the command.
     uint8_t byteIndex = 0;
+    uint8_t reportedTransactionLength = 2;
+    bool byteAcknowledged = false;
     do {
+        sDualShockAcknowledgeReceived = false;
+
         // Put what we want to send into the SPI Data Register.
         if(byteIndex == 0) {
             // All transactions start with a 1 byte.
             SPDR = 0x01;
-        } else if(byteIndex <= toTransmitLength) {
+        } else if(byteIndex <= commandLength) {
             // If we still have [part of] a command to transmit.
-            SPDR = pgm_read_byte(toTransmit + (byteIndex - 1));
+            SPDR = pgm_read_byte(&command[byteIndex - 1]);
         } else {
             // Otherwise, pad with 0s like a PS1 would.
             SPDR = 0x00;
@@ -141,51 +154,59 @@ static uint8_t *sampleDualShock_P(const uint8_t *toTransmit, const uint8_t toTra
         // Wait for the SPI hardware do its thing:
         // Loop until SPIF, the SPI Interrupt Flag in the SPI State Register,
         // is set, signifying the SPI transaction is complete.
-        while(!(SPSR & (1<<SPIF)));
+        while(!(SPSR & (1 << SPIF)));
 
-        // Grab the received byte from the SPI Date register.
-        // This has the side-effect of clearing the SPIF flag.
+        // Grab the received byte from the SPI Data register.
+        // This has the side-effect of clearing the SPIF flag (see above).
         const uint8_t received = SPDR;
 
         // Process what we've received.
         if(byteIndex == 1) {
-            // The byte in position 1 contains the length to expect after
-            // the header.
-            toReceiveLen = min(toReceiveLen, ((received & 0xf) * 2) + 3);
-        }
-        if(byteIndex == 2) {
-            // This should always be 0x5a.
-            if(received != 0x5a) {
-                byteIndex = 0;
-                memset(toReceive, 0, sizeof(toReceive));
-                break;
-            }
+            // The byte in position 1 contains the length to expect _after
+            // the header_ in its lower nybble.
+            reportedTransactionLength = ((received & 0xf) * 2) + 3;
         }
 
-        toReceive[byteIndex] = received;
+        if(byteIndex < toReceiveLength) {
+            // Store thebyte in the buffer we were passed, if there's room.
+            toReceive[byteIndex] = received;
+        }
+
         ++byteIndex;
 
-        if(byteIndex < toReceiveLen) {
-            // The Dual Shock requires us to wait a bit between packets.
-            delayMicroseconds(10);
+        byteAcknowledged = sDualShockAcknowledgeReceived;
+        if(byteIndex < reportedTransactionLength) {
+            // Wait for the Dual Shock to acknowledge the byte.
+            // All bytes except the last one are acknowledged.
+            // sDualShockAcknowledgeReceived will be set to true when the
+            // acknowledge line is raised high and the interrupt handler for
+            // ISR1 is called - see above.
+            uint8_t microsBefore = micros();
+            while(!byteAcknowledged) {
+                if((uint8_t)(micros() - microsBefore) > 100) {
+                    // Sometimes, especially when it's in command mode, the Dual
+                    // Shock seems to get into a bad state and 'give up' on
+                    // some packets. Detect this and bail.
+                    // We'll return failure from this function, and it's up to
+                    // the caller to try again if they want to.
+                    byteIndex = 0;
+                    break;
+                }
+                byteAcknowledged = sDualShockAcknowledgeReceived;
+            }
         }
-    } while(byteIndex < toReceiveLen);
+    } while(byteAcknowledged);
+
+    // Despite the fact that the controller doens't raise the acknowledge line
+    // for the last byte, we still seem to need to wait a bit for communication
+    // to be reliable :-|.
+    delayMicroseconds(20);
 
     // ~CS line ('Attention') needs to be raised to its inactive state between
     // each transaction.
     PORTB |= 1 << 2;
 
-    DualShockReport *receivedReport = (DualShockReport *)toReceive;
-    if(byteIndex <= offsetof(DualShockReport, rightStickX)) {
-        // If we didn't get any analog reports (the controller is in digital
-        // mode), set the analog sticks to centered.
-        receivedReport->rightStickX = 0x80;
-        receivedReport->rightStickY = 0x80;
-        receivedReport->leftStickX = 0x80;
-        receivedReport->leftStickY = 0x80;
-    }
-
-    return toReceive;
+    return byteIndex;
 }
 
 static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
@@ -260,10 +281,110 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
 
 static void prepareInputSubReportInBuffer(uint8_t *buffer)
 {
-    static const PROGMEM uint8_t toTransmit[] = { 0x42 };
-    const uint8_t *received = sampleDualShock_P(toTransmit, sizeof(toTransmit));
+    SwitchReport *switchReport = (SwitchReport *)buffer;
 
-    convertDualShockToSwitch((const DualShockReport *)received, (SwitchReport *)buffer);
+    struct DualShockCommand {
+        const uint8_t length;
+        const uint8_t commandSequence[];
+    };
+
+    static const PROGMEM DualShockCommand pollCommand[] = { { 1, { 0x42 } } };
+    static const PROGMEM DualShockCommand enterConfigCommand[] = { { 3, { 0x43, 0x00, 0x01 } } };
+    static const PROGMEM DualShockCommand exitConfigCommand[] = { { 3, { 0x43, 0x00, 0x00 } } };
+    static const PROGMEM DualShockCommand switchToAnalogCommand[] = { { 3, { 0x44, 0x00, 0x01 } } };
+
+    static const PROGMEM DualShockCommand *const enterAnalogCommandSequence[] = {
+        enterConfigCommand,
+        switchToAnalogCommand,
+        exitConfigCommand,
+    };
+
+    static DualShockReport dualShockReports[2] = { EMPTY_DUAL_SHOCK_REPORT, EMPTY_DUAL_SHOCK_REPORT };
+    static uint8_t previousDualShockReportIndex = 0;
+
+    static const DualShockCommand * const *commandQueue;
+    static uint8_t commandQueueCursor = 0;
+    static uint8_t commandQueueLength = 0;
+
+    static bool analogButtonIsPressed = false;
+    static uint8_t analogButtonPressSofCount = 0;
+
+    uint8_t replyLength = 0;
+    uint8_t thisDualShockReportIndex = (uint8_t)(previousDualShockReportIndex + 1) % 2;
+
+    const bool executingCommandQueue = (commandQueueCursor < commandQueueLength);
+    const uint8_t *commandToExecute_P;
+
+    if(!executingCommandQueue) {
+        // If there's no command queue (the usual case), we just poll
+        // controller state.
+        commandToExecute_P = (const uint8_t *)pollCommand;
+    } else {
+        commandToExecute_P = (const uint8_t *)pgm_read_ptr(commandQueue + commandQueueCursor);
+    }
+
+    replyLength = dualShockCommand_P(commandToExecute_P + offsetof(DualShockCommand, commandSequence),
+                                     pgm_read_byte(commandToExecute_P + offsetof(DualShockCommand, length)),
+                                     (uint8_t *)&dualShockReports[thisDualShockReportIndex],
+                                     sizeof(DualShockReport));
+
+    if(!executingCommandQueue) {
+        if(replyLength >= 2) {
+            uint8_t mode = dualShockReports[thisDualShockReportIndex].deviceMode;
+
+            if(mode != 0x7) {
+                // If we're _not_ in analog mode, initiate the sequence of
+                // commands that will cause the controller to switch to analog
+                // mode. One command is performed every time this function
+                // is called.
+                commandQueue = enterAnalogCommandSequence;
+                commandQueueCursor = 0;
+                commandQueueLength = 3;
+
+                if(mode == 0x4) {
+                    // If we're in digital  mode, it means the user pressed the
+                    // analog button. We treat this as a home button press.
+                    // Because we can't get any information about when the
+                    // button is _released_, we record the time (in USB
+                    // 1ms SOFs) when the press ocurred and switch it on
+                    // for a few ms (see below).
+                    analogButtonIsPressed = true;
+                    analogButtonPressSofCount = usbSofCount;
+                }
+            }
+        }
+    } else {
+        if(replyLength >= 2 && dualShockReports[thisDualShockReportIndex].deviceMode == 0xF) {
+            // On to the next command!
+            ++commandQueueCursor;
+        } else {
+            // The dual shock seems prome to failure to enter comamnd mode,
+            // and to execute commands. If something's gone wrong, just
+            // start the queue again.
+            commandQueueCursor = 0;
+        }
+    }
+
+    if(replyLength != sizeof(DualShockReport) || dualShockReports[thisDualShockReportIndex].deviceMode != 0x7) {
+        // Not an analog report. We'll just use the previous one until the
+        // controller gets back into a good state.
+        thisDualShockReportIndex = previousDualShockReportIndex;
+    }
+
+    convertDualShockToSwitch(&dualShockReports[thisDualShockReportIndex], switchReport);
+
+    if(analogButtonIsPressed) {
+        if((uint8_t)(usbSofCount - analogButtonPressSofCount) < 64) {
+            // Because we don't get any information about when the analog button
+            // is _released_ (see above) we use the 1ms USB SOF count to pretend
+            // the home button was pressed for a few ms.
+            switchReport->homeButton = 1;
+        } else {
+            analogButtonIsPressed = false;
+        }
+    }
+
+    previousDualShockReportIndex = thisDualShockReportIndex;
 }
 
 static void prepareInputReport()

@@ -41,31 +41,49 @@ typedef struct SwitchReport {
 
 typedef struct DualShockReport {
     uint8_t effEff;
-    uint8_t reportId;
+    union {
+        uint8_t reportId;
+        struct {
+            uint8_t reportLength : 4;
+            uint8_t deviceMode : 4;
+        };
+    };
     uint8_t fiveAy;
 
-    int selectButton:1;
-    int l3Button:1;
-    int r3Button:1;
-    int startButton:1;
-    int upButton:1;
-    int rightButton:1;
-    int downButton:1;
-    int leftButton:1;
+    union {
+        uint8_t buttons1;
+        struct {
+            uint8_t selectButton : 1;
+            uint8_t l3Button : 1;
+            uint8_t r3Button : 1;
+            uint8_t startButton : 1;
+            uint8_t upButton : 1;
+            uint8_t rightButton : 1;
+            uint8_t downButton : 1;
+            uint8_t leftButton : 1;
+        };
+    };
 
-    int l2Button:1;
-    int r2Button:1;
-    int l1Button:1;
-    int r1Button:1;
-    int triangleButton:1;
-    int circleButton:1;
-    int crossButton:1;
-    int squareButton:1;
+    union {
+        uint8_t buttons2;
+        struct {
+            uint8_t l2Button : 1;
+            uint8_t r2Button : 1;
+            uint8_t l1Button : 1;
+            uint8_t r1Button : 1;
+            uint8_t triangleButton : 1;
+            uint8_t circleButton : 1;
+            uint8_t crossButton : 1;
+            uint8_t squareButton : 1;
+        };
+    };
 
     uint8_t rightStickX;
     uint8_t rightStickY;
     uint8_t leftStickX;
     uint8_t leftStickY;
 } DualShockReport;
+
+#define EMPTY_DUAL_SHOCK_REPORT { 0, { 0 }, 0, { 0xff }, { 0xff }, 0x80, 0x80, 0x80, 0x80 }
 
 #endif
