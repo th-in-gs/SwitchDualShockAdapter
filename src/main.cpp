@@ -14,9 +14,7 @@ extern "C" {
 #define DEBUG_PRINT_ON 0
 #if DEBUG_PRINT_ON
 #define debugPrint(...) Serial.print(__VA_ARGS__)
-#define debugPrintOn() false
 #else
-#define debugPrintOn() true
 #define debugPrint(...)
 #endif
 
