@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <stdint.h>
+#include "serial.h"
 
 extern "C" {
     #include <usbdrv/usbdrv.h>
@@ -11,11 +13,15 @@ extern "C" {
     void usbFunctionRxHook(const uchar *data, const uchar len);
 }
 
-#define DEBUG_PRINT_ON 0
+#define DEBUG_PRINT_ON 1
 #if DEBUG_PRINT_ON
-#define debugPrint(...) Serial.print(__VA_ARGS__)
+#define debugPrint(...) serialPrint(__VA_ARGS__)
+#define debugPrintHex(...) serialPrintHex(__VA_ARGS__)
+#define debugPrintDec(...) serialPrintDec(__VA_ARGS__)
 #else
 #define debugPrint(...)
+#define debugPrintHex(...)
+#define debugPrintDec(...)
 #endif
 
 void setup()
@@ -52,7 +58,7 @@ void setup()
     // Also set the LED pin high (which will switch it off).
     PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
 
-    Serial.begin(266667);
+    serialInit(266667);
 
     // Disable interrupts for USB reset.
     noInterrupts();
@@ -87,21 +93,21 @@ static uint8_t sCommandHistoryCursor = 0;
 
 static void halt(uint8_t i, const char *message = NULL)
 {
-    Serial.print("HALT: 0x");
-    Serial.print(i, 16);
+    serialPrint("HALT: 0x", true);
+    serialPrintHex(i, true);
     if(message) {
-        Serial.print(' ');
-        Serial.print(message);
+        serialPrint(' ', true);
+        serialPrint(message, true);
     }
-    Serial.print('\n');
+    serialPrint('\n', true);
     for(uint8_t i = 0; i < sCommandHistoryLength; ++i) {
-        Serial.print('\t');
-        Serial.print(sCommandHistory[sCommandHistoryCursor][0], 16);
-        Serial.print(',');
-        Serial.print(sCommandHistory[sCommandHistoryCursor][1], 16);
-        Serial.print(',');
-        Serial.print(sCommandHistory[sCommandHistoryCursor][2], 16);
-        Serial.print('\n');
+        serialPrint('\t', true);
+        serialPrintHex(sCommandHistory[sCommandHistoryCursor][0], true);
+        serialPrint(',', true);
+        serialPrintHex(sCommandHistory[sCommandHistoryCursor][1], true);
+        serialPrint(',', true);
+        serialPrintHex(sCommandHistory[sCommandHistoryCursor][2], true);
+        serialPrint('\n', true);
         if(sCommandHistoryCursor == 0) {
             sCommandHistoryCursor = sCommandHistoryLength - 1;
         } else {
@@ -461,9 +467,9 @@ static void prepareUartReplyReport(uint8_t ack, uint8_t subCommand, const uint8_
 static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t length, const uint8_t *replyData, uint8_t replyDataLength)
 {
     if(replyDataLength != length) {
-        Serial.print(address, 16);
-        Serial.print(length, 16);
-        Serial.print(replyDataLength, 16);
+        debugPrintHex(address);
+        debugPrintHex(length);
+        debugPrintHex(replyDataLength);
     }
 
     const uint8_t bufferLength = replyDataLength + 5;
@@ -494,37 +500,17 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
     if(accumulatedReportBytes == 0) {
         reportId = data[0];
-        debugPrint("\r\n\n");
+        debugPrint("\n");
+    }
+    debugPrint("\nO: ");
+    for(uint8_t i = 0; i < len; ++i) {
+        debugPrintHex(data[i]);
     }
 
-    // Different reports are different lengths!
-    // Work out if this one is complete.
-    bool reportComplete = false;
-    switch(reportId) {
-    case 0x00: // Unknown.
-        if(len != 2 || accumulatedReportBytes != 0) { // Always only 2 bytes?
-            halt(reportId, "Unexpected report length for 0x00");
-        }
-        reportComplete = true;
-        break;
-    case 0x80: // Regular commands.
-        if(len != 2 || accumulatedReportBytes != 0) { // Always only 2 bytes?
-            halt(reportId, "Unexpected report length for 0x80");
-        }
-        reportComplete = true;
-        break;
-    case 0x01: // 'UART' commands.
-    case 0x10: // Unknown. They contain an incrementing number. Keep-alive?
-        if(accumulatedReportBytes == 8) { // These are always two packets long, but the length varies.
-            reportComplete = true;
-        }
-        break;
-    default:
-        halt(reportId, "Unexpected report ID");
-        return;
-    }
-
-    debugPrint('>');
+    // USB signifies end-of-transfer as either a 'short' packet (not 8 bytes), or
+    //  reaching the maximum size.
+    uint8_t reportLength = accumulatedReportBytes + len;
+    bool reportComplete = len != 8 ||  reportLength == sReportSize;
 
     // Get ready to process the report if we have it all -
     // or stow this packet away for accumulation if we
@@ -538,25 +524,25 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         // before we either process the report or return.
 
         memcpy(reportAccumulationBuffer + accumulatedReportBytes, data, len);
+        accumulatedReportBytes = reportLength;
         if(reportComplete) {
             // We've completed this report. Parse it, and set out accumulation
             // counter back to zero for the next incoming report.
             reportIn = reportAccumulationBuffer;
-            accumulatedReportBytes = 0;
         } else {
             // We need more data to complete the report.
-            accumulatedReportBytes += len;
             return;
         }
     }
 
+
     // Deal with the report!
     const uint8_t commandOrSequenceNumber = reportIn[1];
     uint8_t uartCommand = 0;
-    debugPrint(' ');
-    debugPrint(reportId, 16);
+    debugPrint("\n\n> ");
+    debugPrintHex(reportId);
     debugPrint(':');
-    debugPrint(commandOrSequenceNumber, 16);
+    debugPrintHex(commandOrSequenceNumber);
 
     switch(reportId) {
     case 0x80: {
@@ -564,25 +550,33 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
         const uint8_t command = commandOrSequenceNumber;
         switch(command) {
-        case 0x05:
+        case 0x05: {
             // Stop HID Reports
             sInputReportsSuspended = true;
-            break;
-        case 0x04:
+        } break;
+        case 0x04: {
             // Start HID Reports
             sInputReportsSuspended = false;
-            break;
+        } break;
         case 0x01: {
             // Request controller info inc. MAC address
             static const PROGMEM uint8_t reply[] = { 0x00, 0x03, 0x43, 0x23, 0x53, 0x22, 0xa3, 0xc7 };
             prepareRegularReplyReport_P(0x81, command, reply, sizeof(reply));
         } break;
-        case 0x02:
+        case 0x02: {
+            // "Sends handshaking packets over UART to the Joy-Con or Pro Controller"
             prepareRegularReplyReport_P(0x81, command, NULL, 0);
-            break;
-        default:
-            debugPrint('?');
-            break;
+        } break;
+        case 0x03: {
+            // "Switches baudrate to 3Mbit, needed for improved Joy-Con latency.
+            //  This command can only be called following 80 02, but allows another 80 02 packet to be sent
+            //  following it. A second handshake is required for the baud switch to work."
+            prepareRegularReplyReport_P(0x81, command, NULL, 0);
+        } break;
+        default: {
+            halt(uartCommand, "Unexpected 'regular' subcommand");
+            prepareRegularReplyReport_P(0x81, command, NULL, 0);
+        } break;
         }
     } break;
     case 0x01: {
@@ -590,7 +584,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
         uartCommand = reportIn[10];
         debugPrint('|');
-        debugPrint(uartCommand, 16);
+        debugPrintHex(uartCommand);
 
         switch(uartCommand) {
         case 0x01: {
@@ -615,9 +609,9 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             const uint16_t address = reportIn[11] | reportIn[12] << 8;
             const uint16_t length = reportIn[15];
             debugPrint('<');
-            debugPrint(address, 16);
+            debugPrintHex(address);
             debugPrint('-');
-            debugPrint(length, 16);
+            debugPrintHex(length);
 
             const uint8_t *spiReply = NULL;
             uint8_t spiReplyLength = 0;
@@ -681,6 +675,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         } break;
         case 0x00: // Do nothing (return report)
         case 0x03: // Set input report mode
+        case 0x06: // Set power state
         case 0x08: // Set shipment low power state
         case 0x22: // Set NFC/IR MCU state
         case 0x30: // Set player lights
@@ -701,6 +696,9 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         break;
     case 0x00:
         // Not quite sure why we sometimes get reports with a 0 id.
+        // The switch seems to stop talking to us if we don't reply with an input report
+        // though, even if they're suspended (see sInputReportsSuspended)
+        prepareInputReport();
         break;
     default:
         // We should never reach here because we should've halted above.
@@ -731,8 +729,12 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     }
 
     // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
-    debugPrint(' ');
-    debugPrint(OSCCAL, 16);
+    debugPrint(" [OSC: ");
+    debugPrintDec(OSCCAL);
+    debugPrint(']');
+
+    // We're ready for another report.
+    accumulatedReportBytes = 0;
 }
 
 void usbFunctionWriteOut(uchar *data, uchar len)
@@ -770,6 +772,11 @@ void usbFunctionRxHook(const uchar *data, const uchar len)
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
+    serialPrint("\n\nUnexpected setup transaction - data is: ");
+    for(uint8_t i = 0; i < 8; ++i) {
+        serialPrint(data[i]);
+    }
+
     // I've never seen this called when connected to a Switch or a Mac.
     // It might be necessary to implement the USB spec, but I really don't
     // like having untested code that's never actually used.
@@ -806,55 +813,42 @@ static void ledHeartbeat()
         }
 
 #if DEBUG_PRINT_ON
-        Serial.println("\nFPS: ");
-        Serial.println(transmittedReportsCount, 10);
+        debugPrint("\n\nFPS: ");
+        debugPrintDec(transmittedReportsCount);
         transmittedReportsCount = 0;
 #endif
     }
 }
 
-void loop()
+static void transmitPacket()
 {
-    ledHeartbeat();
-    usbPoll();
+    bool stopTransmission = false;
 
-    if(usbInterruptIsReady()) {
-        // Although V-USB is ready for us to give it the packet to transmit on
-        // the next interrupt, we need less than 1ms to prepare, so we can wait
-        // until the next 1ms SOF is received before preparing the packet for
-        // a _little_ bit lower latency.
+    // It takes multiple interrupts to send one report, so we keep track
+    // of the report we're sending, and our position within it, in these
+    // static variables.
+    static uint8_t transmittingReportIndex = 0;
+    static uint8_t *transmittingReport = NULL;
+    static uint8_t transmittingReportLength = 0;
+    static uint8_t transmittingReportInputReportPosition = 0;
+    static uint8_t transmittingReportTransmissionCursor = 0;
 
-        static uint8_t preparePacketAtSofCount = 0;
-        const uint8_t thisSofCount = usbSofCount;
-        if(!((uint8_t)(preparePacketAtSofCount - thisSofCount) <= 1)) {
-            // We haven't already scheduled packet preparation, so schedule it
-            // for the next SOF.
-            preparePacketAtSofCount = thisSofCount + 1;
-        } else if(thisSofCount == preparePacketAtSofCount) {
-            // It's time to provide a packet to V-USB.
+    if(!stopTransmission) {
+        // It's time to provide a packet to V-USB.
+        if(transmittingReport == NULL) {
+            if(!sReportPending && !sInputReportsSuspended) {
+                // If there's no report already pending (i.e. no prepared
+                // reply to a command sent by the Switch), prepare
+                // a plain input report.
+                prepareInputReport();
+            }
 
-            // It takes multiple interrupts to send one report, so we keep track
-            // of the report we're sending, and our position within it, in these
-            // static variables.
-            static uint8_t transmittingReportIndex = 0;
-            static uint8_t *transmittingReport = NULL;
-            static uint8_t transmittingReportLength = 0;
-            static uint8_t transmittingReportInputReportPosition = 0;
-            static uint8_t transmittingReportTranmissionCursor = 0;
-
-            if(transmittingReport == NULL) {
-                if(!sReportPending) {
-                    // If there's no report already pending (i.e. no prepared
-                    // reply to a command sent by the Switch), prepare
-                    // a plain input report.
-                    prepareInputReport();
-                }
-
+            if(sReportPending) {
                 transmittingReportIndex = sCurrentReport;
                 transmittingReport = sReports[transmittingReportIndex];
                 transmittingReportLength = sReportLengths[transmittingReportIndex];
                 transmittingReportInputReportPosition = sReportsInputReportPosition[transmittingReportIndex];
-                transmittingReportTranmissionCursor = 0;
+                transmittingReportTransmissionCursor = 0;
 
                 // If the Switch sends a command while we're sending this
                 // report, the reply to it can be prepared while we're sending
@@ -863,14 +857,14 @@ void loop()
                 sCurrentReport = (transmittingReportIndex + 1) % 2;
                 sReportPending = false;
             }
+        }
 
+        if(transmittingReport != NULL) {
             // Low-speed USB can only sent up to eight bytes at a time.
-            const uint8_t packetSize = min(8, transmittingReportLength - transmittingReportTranmissionCursor);
-            const uint8_t nextReportTransmissionCursor = transmittingReportTranmissionCursor + packetSize;
+            const uint8_t packetSize = min(8, transmittingReportLength - transmittingReportTransmissionCursor);
+            const uint8_t nextReportTransmissionCursor = transmittingReportTransmissionCursor + packetSize;
 
-            if(transmittingReportInputReportPosition != 0 &&
-               transmittingReportInputReportPosition >= transmittingReportTranmissionCursor &&
-               transmittingReportInputReportPosition < nextReportTransmissionCursor) {
+            if(transmittingReportInputReportPosition != 0 && transmittingReportInputReportPosition >= transmittingReportTransmissionCursor && transmittingReportInputReportPosition < nextReportTransmissionCursor) {
                 // We prepare the actual input part of the report - i.e. the
                 // state of the Dual Shock's controls - at the last minute
                 // in an attempt to get the lowest possible latency.
@@ -879,20 +873,74 @@ void loop()
 
             // Actually provide the packet to V-USB to be sent when the next
             // interrupt arrives.
-            usbSetInterrupt(&transmittingReport[transmittingReportTranmissionCursor], packetSize);
+            usbSetInterrupt(&transmittingReport[transmittingReportTransmissionCursor], packetSize);
 
-            transmittingReportTranmissionCursor = nextReportTransmissionCursor;
+            transmittingReportTransmissionCursor = nextReportTransmissionCursor;
 
-            if(packetSize < 8 || transmittingReportTranmissionCursor == sReportSize) {
+            if(packetSize < 8 || transmittingReportTransmissionCursor == sReportSize) {
                 // We've reached the end of this report.
-                sReportLengths[transmittingReportIndex] = 0;
-                sReportsInputReportPosition[transmittingReportIndex] = 0;
-                transmittingReport = NULL;
+                stopTransmission = true;
+            }
+        }
+    }
+
+    if(stopTransmission) {
+        sReportLengths[transmittingReportIndex] = 0;
+        sReportsInputReportPosition[transmittingReportIndex] = 0;
+        transmittingReport = NULL;
 
 #if DEBUG_PRINT_ON
-                ++transmittedReportsCount;
+        ++transmittedReportsCount;
 #endif
-            }
+    }
+}
+
+static bool sUsbSuspended = true;
+
+void loop()
+{
+    ledHeartbeat();
+    serialPoll();
+    usbPoll();
+
+    const uint8_t sofCountNow = usbSofCount;
+    const uint16_t millisNow = millis();
+
+    static uint8_t lastSofCount = 0xff;
+    static uint16_t lastSofTime = 0xff;
+    if(sofCountNow != lastSofCount) {
+        lastSofCount = sofCountNow;
+        lastSofTime = millisNow;
+        if(sUsbSuspended) {
+            sUsbSuspended = false;
+            debugPrint("\nUSB Active\n");
+        }
+    }
+
+    if(!sUsbSuspended && (uint8_t)(millisNow - lastSofTime) > 4) {
+        // No USB activity for over 3ms - we've detected a USB sleep.
+        // (USB 2.0 spec: "7.1.7.6 Suspending")
+
+        // Abandon any in-flight commands (I suspect the Switch is smart enough
+        // that this never happens, but better safe than sorry).
+        sUsbSuspended = true;
+        debugPrint("\nUSB Suspended\n");
+    }
+
+    if(!sUsbSuspended && usbInterruptIsReady()) {
+        // Although V-USB is ready for us to give it the packet to transmit on
+        // the next interrupt, we need less than 1ms to prepare, so we can wait
+        // until the next 1ms SOF is received before preparing the packet for
+        // a _little_ bit lower latency.
+
+        static uint8_t preparePacketAtSofCount = 0;
+        if(!((uint8_t)(preparePacketAtSofCount - sofCountNow) <= 1)) {
+            // We haven't already scheduled packet preparation, so schedule it
+            // for the next SOF.
+            preparePacketAtSofCount = sofCountNow + 1;
+        }
+        if(sofCountNow == preparePacketAtSofCount) {
+            transmitPacket();
         }
     }
 }

@@ -152,7 +152,7 @@ PROGMEM const char usbDescriptorConfiguration[] = {
             0x01,                       //  8: OUT endpoint number 1
             0x03,                       //  8: attrib: Interrupt endpoint
             8, 0,                       // 16: maximum packet size
-            8,                          //  8: poll interval in ms
+            3,                          //  8: poll interval in ms
 };
 
 static_assert(sizeof(usbDescriptorConfiguration) == USB_PROP_LENGTH(USB_CFG_DESCR_PROPS_CONFIGURATION), "usbHidReportDescriptor contains a different number of entries than the USB_CFG_HID_REPORT_DESCRIPTOR_LENGTH macro specifies");
