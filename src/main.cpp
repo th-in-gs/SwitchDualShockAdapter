@@ -1,10 +1,16 @@
-#include <Arduino.h>
-#include <stdint.h>
 #include "serial.h"
+#include "descriptors.h"
+
+#include <stdlib.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <avr/interrupt.h>
+#include <util/delay.h>
 
 extern "C" {
     #include <usbdrv/usbdrv.h>
-    #include "descriptors.h"
 
     // We declare this to be used by V-USB's 'osccal.h' oscilator calibration
     // routine.
@@ -24,8 +30,46 @@ extern "C" {
 #define debugPrintDec(...)
 #endif
 
+void timerInit() {
+    // Timer set to increment every F_CPU / 64 cycles
+    // (this is necessary for the osccal.h oscilator calibration to work!)
+    TCCR0 = (TCCR0 & ~0b111) | 0b011;
+
+    // Enable the interupt.
+    TIMSK |= 1 << TOIE0;
+}
+
+// Very simple timer routines, only able to count milliseconds in uint8_t
+// (so only 0-255 millis before reset!)
+// We don't need to count up higher than
+// the number of timer fires it would take to get to 256ms.
+//
+// (F_CPU / 64) = Timer counts per second.
+// (F_CPU / 64) / 256 = overflows per second.
+// ((F_CPU / 64) / 256) / 1000 = overflows per millisecond.
+// ((F_CPU / 64) / 256) / 1000 * 256 = overflows per _256_ milliseconds.
+//    = (F_CPU / 64) / 1000  = overflows per 256 milliseconds.
+//    = F_CPU / 64000  = overflows per 256 milliseconds.
+
+static const uint8_t sTimerZeroOverflowsPer256Millis = F_CPU / 64000;
+static volatile uint8_t sTimer0FireCount = 0;
+
+ISR(TIMER0_OVF_vect, ISR_NOBLOCK) {
+    sTimer0FireCount = (sTimer0FireCount + 1) % sTimerZeroOverflowsPer256Millis;
+}
+
+uint8_t timerMillis() {
+    // We can't just divide by 'fires per millisecond' directly
+    // because that's ((F_CPU / 64) / 256) / 1000 - which integer-rounds to zero!
+    // So we multiply by 256 then divide by sTimerZeroFiresPer256Millis.
+    return (uint8_t)(((uint16_t)sTimer0FireCount * 256) / (uint16_t)sTimerZeroOverflowsPer256Millis);
+}
+
 void setup()
 {
+    timerInit();
+    serialInit(266667);
+
     // Set port 2 outputs. Most of these pind are prescribed by the ATmega's
     // built in SPI communication hardware.
     DDRB |=
@@ -58,10 +102,8 @@ void setup()
     // Also set the LED pin high (which will switch it off).
     PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
 
-    serialInit(266667);
-
     // Disable interrupts for USB reset.
-    noInterrupts();
+    cli();
 
     // Initialize V-USB.
     usbInit();
@@ -70,11 +112,11 @@ void setup()
     //      "In theory, you don't need this, but it prevents inconsistencies
     //      between host and device after hardware or watchdog resets."
     usbDeviceDisconnect();
-    delay(250);
+    _delay_ms(250);
     usbDeviceConnect();
 
     // Enable interrupts again.
-    interrupts();
+    sei();
 }
 
 static const uint8_t sReportSize = 64;
@@ -134,7 +176,7 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
 
     // Give the controller a little time to notice (this seems to be necessary
     // for reliable communication).
-    delayMicroseconds(20);
+    _delay_us(20);
 
     // Loop using SPI to send/receive each byte in the command.
     uint8_t byteIndex = 0;
@@ -185,9 +227,9 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
             // sDualShockAcknowledgeReceived will be set to true when the
             // acknowledge line is raised high and the interrupt handler for
             // ISR1 is called - see above.
-            uint8_t microsBefore = micros();
+            uint8_t microsWaited = 0;
             while(!byteAcknowledged) {
-                if((uint8_t)(micros() - microsBefore) > 100) {
+                if(microsWaited > 100) {
                     // Sometimes, especially when it's in command mode, the Dual
                     // Shock seems to get into a bad state and 'give up' on
                     // some packets. Detect this and bail.
@@ -196,6 +238,8 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
                     byteIndex = 0;
                     break;
                 }
+                _delay_us(2);
+                microsWaited += 2;
                 byteAcknowledged = sDualShockAcknowledgeReceived;
             }
         }
@@ -204,7 +248,7 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
     // Despite the fact that the controller doens't raise the acknowledge line
     // for the last byte, we still seem to need to wait a bit for communication
     // to be reliable :-|.
-    delayMicroseconds(20);
+    _delay_us(20);
 
     // ~CS line ('Attention') needs to be raised to its inactive state between
     // each transaction.
@@ -860,8 +904,9 @@ static void transmitPacket()
         }
 
         if(transmittingReport != NULL) {
-            // Low-speed USB can only sent up to eight bytes at a time.
-            const uint8_t packetSize = min(8, transmittingReportLength - transmittingReportTransmissionCursor);
+            const uint8_t remainingLength = transmittingReportLength - transmittingReportTransmissionCursor;
+            const uint8_t packetSize = remainingLength <= 8 ? remainingLength : 8;
+
             const uint8_t nextReportTransmissionCursor = transmittingReportTransmissionCursor + packetSize;
 
             if(transmittingReportInputReportPosition != 0 && transmittingReportInputReportPosition >= transmittingReportTransmissionCursor && transmittingReportInputReportPosition < nextReportTransmissionCursor) {
@@ -896,6 +941,7 @@ static void transmitPacket()
 }
 
 static bool sUsbSuspended = true;
+static uint8_t previousMillisNow = 0;
 
 void loop()
 {
@@ -904,10 +950,10 @@ void loop()
     usbPoll();
 
     const uint8_t sofCountNow = usbSofCount;
-    const uint16_t millisNow = millis();
+    const uint8_t millisNow = timerMillis();
 
     static uint8_t lastSofCount = 0xff;
-    static uint16_t lastSofTime = 0xff;
+    static uint8_t lastSofTime = 0xff;
     if(sofCountNow != lastSofCount) {
         lastSofCount = sofCountNow;
         lastSofTime = millisNow;
@@ -943,4 +989,11 @@ void loop()
             transmitPacket();
         }
     }
+}
+
+int main() {
+    setup();
+    do {
+        loop();
+    } while(true);
 }
