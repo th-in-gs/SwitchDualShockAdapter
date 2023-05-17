@@ -940,8 +940,29 @@ static void transmitPacket()
     }
 }
 
-static bool sUsbSuspended = true;
-static uint8_t previousMillisNow = 0;
+void usbResume()
+{
+    // This doesn't seem to work, but I leave it here for potential future use.
+    // Reportedly the Switch does not respond to USB resume requests.
+    cli();
+    uint8_t outWas = USBOUT;
+    uint8_t ddrWas = USBDDR;
+
+    // Signal a 'K State' (DATA+ High, DATA- low)
+    USBOUT = (USBOUT & ~USBMASK) | (1 << USBPLUS);
+    USBDDR |= USBMASK;
+    debugPrintHex(USBOUT);
+    debugPrintHex(USBDDR);
+
+    // Wait. Spec says min 1 ms, max 15 ms.
+    _delay_ms(7);
+
+    // Set the line back to its previous idle state.
+    USBDDR = ddrWas;
+    USBOUT = outWas;
+    GIFR &= ~(1 << INTF0);
+    sei();
+}
 
 void loop()
 {
@@ -952,6 +973,7 @@ void loop()
     const uint8_t sofCountNow = usbSofCount;
     const uint8_t millisNow = timerMillis();
 
+    static bool sUsbSuspended = true;
     static uint8_t lastSofCount = 0xff;
     static uint8_t lastSofTime = 0xff;
     if(sofCountNow != lastSofCount) {
