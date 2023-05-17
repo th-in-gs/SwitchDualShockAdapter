@@ -1,0 +1,11 @@
+Measured power usage on breadboard:
+
+No LEDs: 19mA
++ Power LED: 24.5mA (+5.5mA)
++ Blink LED when on: 29mA 29 (+10mA)
+Disconnected Dual Shock: 12mA (-7mA)
+
+Power Down (USB Suspend): 4.2mA
+Power Down, No Dual Shock: 1.9mA (-2.3mA)
+
+It may be a good idea to switch the Dual Shock off during power save - at 2.3ma that could even be done by using an ATmega pins as ground and switching it to high impedance when off. That may not be a good idea when vibration is working though - the current may be too high?

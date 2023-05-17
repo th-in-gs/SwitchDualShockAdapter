@@ -379,8 +379,8 @@ section at the end of this file).
 
 // We need to use a low-level instead of falling-edge interrupt
 // to allow wake from power saving sleep to work.
-#define USB_INTR_CFG_SET        0
-#define USB_INTR_CFG_CLR  ((1 << ISC00) | (1 << ISC01))
+#define USB_INTR_CFG_SET    0
+#define USB_INTR_CFG_CLR    ((1 << ISC00) | (1 << ISC01))
 
 #ifdef __ASSEMBLER__
     #include "osctune.h"
