@@ -8,6 +8,7 @@
 
 #include <avr/interrupt.h>
 #include <util/delay.h>
+#include <avr/sleep.h>
 
 extern "C" {
     #include <usbdrv/usbdrv.h>
@@ -67,6 +68,11 @@ uint8_t timerMillis() {
 
 void setup()
 {
+    // Set up sleep mode. This doesn't actually put the device to sleep yet -
+    // It just sets the mode that will be used when `sleep_cpu()` is called.
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    sleep_enable();
+
     timerInit();
     serialInit(266667);
 
@@ -940,7 +946,8 @@ static void transmitPacket()
     }
 }
 
-void usbResume()
+#if 0
+static void usbResume()
 {
     // This doesn't seem to work, but I leave it here for potential future use.
     // Reportedly the Switch does not respond to USB resume requests.
@@ -963,6 +970,7 @@ void usbResume()
     GIFR &= ~(1 << INTF0);
     sei();
 }
+#endif
 
 void loop()
 {
@@ -995,21 +1003,31 @@ void loop()
         debugPrint("\nUSB Suspended\n");
     }
 
-    if(!sUsbSuspended && usbInterruptIsReady()) {
-        // Although V-USB is ready for us to give it the packet to transmit on
-        // the next interrupt, we need less than 1ms to prepare, so we can wait
-        // until the next 1ms SOF is received before preparing the packet for
-        // a _little_ bit lower latency.
+    if(!sUsbSuspended ) {
+        if(usbInterruptIsReady()) {
+            // Although V-USB is ready for us to give it the packet to transmit
+            // on the next interrupt, we need less than 1ms to prepare, so we
+            // can wait until the next 1ms SOF is received before preparing the
+            // packet for a _little_ bit lower latency.
 
-        static uint8_t preparePacketAtSofCount = 0;
-        if(!((uint8_t)(preparePacketAtSofCount - sofCountNow) <= 1)) {
-            // We haven't already scheduled packet preparation, so schedule it
-            // for the next SOF.
-            preparePacketAtSofCount = sofCountNow + 1;
+            static uint8_t preparePacketAtSofCount = 0;
+            if(!((uint8_t)(preparePacketAtSofCount - sofCountNow) <= 1)) {
+                // We haven't already scheduled packet preparation, so schedule
+                // it for the next SOF.
+                preparePacketAtSofCount = sofCountNow + 1;
+            }
+            if(sofCountNow == preparePacketAtSofCount) {
+                transmitPacket();
+            }
         }
-        if(sofCountNow == preparePacketAtSofCount) {
-            transmitPacket();
-        }
+    } else {
+        // Switch off the debug LED to save power.
+        PORTB |= (1 << 0);
+
+        sleep_cpu();
+
+        // USB traffic firing INT0 will wake us up.
+        debugPrint("Awake\n");
     }
 }
 
