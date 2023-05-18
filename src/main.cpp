@@ -42,13 +42,13 @@ void setup()
     timerInit();
     serialInit(266667);
 
-    // Set port 2 outputs. Most of these pind are prescribed by the ATmega's
+    // Set port 2 outputs. Most of these pins are prescribed by the ATmega's
     // built in SPI communication hardware.
     DDRB |=
-        1 << 3 | // PICO (PB3) - Serial data from ATmega to controller.
         1 << 5 | // SCK (PB5) - Serial data clock.
-        1 << 2 | // Use PB2 for the controller's ^CS line
-        1 << 0   // PB0 for our blinking LED.
+        1 << 3 | // PICO (PB3) - Serial data from ATmega to controller.
+        1 << 2 | // Use PB2 for the controller's 'Chip Select' line
+        1 << 0   // PB0 for our blinking debug LED.
     ;
 
     // Set up the SPI Control Register. Form right to left:
@@ -65,14 +65,16 @@ void setup()
     // Double the SPI rate defined above (so 200kHz * 2 = 400kHz)
     SPSR |= 1 << SPI2X;
 
+    // Need to set the controller's 'Chip Select', which is active-low, to high
+    // so we can pull it low for each transaction.
+    // PICO and SCK should rest at high too.
+    // Also set the debug LED pin high (which will switch it off).
+    PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
+
+    // Set up Interrupt 1 to fire when the the Dual Shock 'Acknowledge' line
+    // goes low.
     MCUCR |= 1 << ISC11 | 1 << ISC10;
     GICR |= 1 << INT1;
-
-    // Need to set the controller's CS, which is active-low, to high so we can
-    // pull it low for each transaction - and PICO and SCK should rest at high
-    // too.
-    // Also set the LED pin high (which will switch it off).
-    PORTB |= 1 << 5 | 1 << 3 | 1 << 2 | 1 << 0;
 
     // Disable interrupts for USB reset.
     cli();
@@ -136,7 +138,7 @@ static void halt(uint8_t i, const char *message = NULL)
 static volatile bool sDualShockAcknowledgeReceived = false;
 ISR(INT1_vect, ISR_NOBLOCK)
 {
-    // Set the flag so that the main code can know it's done.
+    // Set the flag so that the main code can know about the acknowledgement.
     sDualShockAcknowledgeReceived = true;
 }
 
@@ -150,11 +152,13 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
     // for reliable communication).
     _delay_us(20);
 
-    // Loop using SPI to send/receive each byte in the command.
+    // Loop using SPI hardware to send/receive each byte in the command.
     uint8_t byteIndex = 0;
     uint8_t reportedTransactionLength = 2;
     bool byteAcknowledged = false;
     do {
+        // This will be set to true by the interrupt routine, above,
+        // when the Dual Shock sends its acknowledge signal.
         sDualShockAcknowledgeReceived = false;
 
         // Put what we want to send into the SPI Data Register.
@@ -186,25 +190,23 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
         }
 
         if(byteIndex < toReceiveLength) {
-            // Store thebyte in the buffer we were passed, if there's room.
+            // Store the byte in the buffer we were passed, if there's room.
             toReceive[byteIndex] = received;
         }
 
         ++byteIndex;
 
         byteAcknowledged = sDualShockAcknowledgeReceived;
+
+        // Wait for the Dual Shock to acknowledge the byte.
+        // All bytes except the last one(?!) are acknowledged.
         if(byteIndex < reportedTransactionLength) {
-            // Wait for the Dual Shock to acknowledge the byte.
-            // All bytes except the last one are acknowledged.
-            // sDualShockAcknowledgeReceived will be set to true when the
-            // acknowledge line is raised high and the interrupt handler for
-            // ISR1 is called - see above.
             uint8_t microsWaited = 0;
             while(!byteAcknowledged) {
                 if(microsWaited > 100) {
                     // Sometimes, especially when it's in command mode, the Dual
-                    // Shock seems to get into a bad state and 'give up' on
-                    // some packets. Detect this and bail.
+                    // Shock seems to get into a bad state and 'give up'.
+                    // Detect this and bail.
                     // We'll return failure from this function, and it's up to
                     // the caller to try again if they want to.
                     byteIndex = 0;
@@ -542,8 +544,6 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         memcpy(reportAccumulationBuffer + accumulatedReportBytes, data, len);
         accumulatedReportBytes = reportLength;
         if(reportComplete) {
-            // We've completed this report. Parse it, and set out accumulation
-            // counter back to zero for the next incoming report.
             reportIn = reportAccumulationBuffer;
         } else {
             // We need more data to complete the report.
@@ -685,7 +685,6 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             prepareUartReplyReport_P(0x82, uartCommand, NULL, 0);
             break;
         case 0x21: {// Set NFC/IR MCU config
-            // Request device info
             static const PROGMEM uint8_t reply[] = { 0x01, 0x00, 0xFF, 0x00, 0x08, 0x00, 0x1B, 0x01 };
             prepareUartReplyReport_P(0xa0, uartCommand, reply, sizeof(reply));
         } break;
@@ -712,8 +711,9 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         break;
     case 0x00:
         // Not quite sure why we sometimes get reports with a 0 id.
-        // The switch seems to stop talking to us if we don't reply with an input report
-        // though, even if they're suspended (see sInputReportsSuspended)
+        // The switch seems to stop talking to us if we don't reply with an
+        // input report though, even if they're suspended (see
+        // sInputReportsSuspended)
         prepareInputReport();
         break;
     default:
@@ -796,7 +796,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8])
     // I've never seen this called when connected to a Switch or a Mac.
     // It might be necessary to implement the USB spec, but I really don't
     // like having untested code that's never actually used.
-    // Let's just return 0 (signified 'not handled), and worry about this if it
+    // Let's just return 0 (signified 'not handled'), and worry about this if it
     // turns out to be needed later.
     return 0;
 }
@@ -821,11 +821,10 @@ static void ledHeartbeat()
 
     if((uint8_t)(quarterSecondCount - lastLedToggleQuarterSecondCount) == 4) {
         lastLedToggleQuarterSecondCount = quarterSecondCount;
-        bool ledIsOn = ((PORTB & (1 << 0)) != 0);
-        if(ledIsOn) {
-            PORTB &= ~(1 << 0);
-        } else {
+        if((PORTB & (1 << 0)) == 0) {
             PORTB |= (1 << 0);
+        } else {
+            PORTB &= ~(1 << 0);
         }
 
 #if DEBUG_PRINT_ON
@@ -962,9 +961,6 @@ void loop()
     if(!sUsbSuspended && (uint8_t)(millisNow - lastSofTime) > 4) {
         // No USB activity for over 3ms - we've detected a USB sleep.
         // (USB 2.0 spec: "7.1.7.6 Suspending")
-
-        // Abandon any in-flight commands (I suspect the Switch is smart enough
-        // that this never happens, but better safe than sorry).
         sUsbSuspended = true;
         debugPrint("\nUSB Suspended\n");
     }
