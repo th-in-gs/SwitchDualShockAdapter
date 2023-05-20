@@ -1,12 +1,15 @@
 #include "serial.h"
 #include "timer.h"
+
 #include "descriptors.h"
+#include "rumble.h"
 
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
+#include <avr/pgmspace.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 #include <util/delay.h>
@@ -34,11 +37,20 @@ extern "C" {
 
 void setup()
 {
+    // The oscilator is calibrated to 12.8MHz based on 1ms timing of USB frames
+    // by the routines in osctune.h. This seems to be around where things
+    // settle, so let's give ourselves a head start on reaching equilibrium
+    // by starting here.
+    // As well as helping USB communication to start up faster, this also helps
+    // to get serial debug output working earlier.
+    OSCCAL = 240;
+
     // Set up sleep mode. This doesn't actually put the device to sleep yet -
     // It just sets the mode that will be used when `sleep_cpu()` is called.
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
     sleep_enable();
 
+    // Initialize our utility functions.
     timerInit();
     serialInit(266667);
 
@@ -107,6 +119,10 @@ static const uint8_t sCommandHistoryLength = 32;
 static uint8_t sCommandHistory[sCommandHistoryLength][3] = {0};
 static uint8_t sCommandHistoryCursor = 0;
 
+static bool rumbleEnabled = false;
+static uint8_t rumbleAmplitude = 0;
+static uint16_t rumbleFrequency = 0;
+
 static void halt(uint8_t i, const char *message = NULL)
 {
     serialPrint("HALT: 0x", true);
@@ -142,7 +158,7 @@ ISR(INT1_vect, ISR_NOBLOCK)
     sDualShockAcknowledgeReceived = true;
 }
 
-static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandLength,
+static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLength,
     uint8_t *toReceive, const uint8_t toReceiveLength)
 {
     // Pull-down the ~CS ('Attention') line.
@@ -167,7 +183,7 @@ static uint8_t dualShockCommand_P(const uint8_t *command, const uint8_t commandL
             SPDR = 0x01;
         } else if(byteIndex <= commandLength) {
             // If we still have [part of] a command to transmit.
-            SPDR = pgm_read_byte(&command[byteIndex - 1]);
+            SPDR = command[byteIndex - 1];
         } else {
             // Otherwise, pad with 0s like a PS1 would.
             SPDR = 0x00;
@@ -310,14 +326,18 @@ static void prepareInputSubReportInBuffer(uint8_t *buffer)
         const uint8_t commandSequence[];
     };
 
-    static const PROGMEM DualShockCommand pollCommand[] = { { 1, { 0x42 } } };
+    // second-to-last and last byte are small motor (on/off?),
+    // large motor (~0x40-0xff?)
+    static const PROGMEM DualShockCommand pollCommand[] = { { 2, { 0x42, 0x00 } } };
     static const PROGMEM DualShockCommand enterConfigCommand[] = { { 3, { 0x43, 0x00, 0x01 } } };
     static const PROGMEM DualShockCommand exitConfigCommand[] = { { 3, { 0x43, 0x00, 0x00 } } };
     static const PROGMEM DualShockCommand switchToAnalogCommand[] = { { 3, { 0x44, 0x00, 0x01 } } };
+    static const PROGMEM DualShockCommand setUpMotorsCommand[] = { { 8, { 0x4D, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF } } };
 
     static const PROGMEM DualShockCommand *const enterAnalogCommandSequence[] = {
         enterConfigCommand,
         switchToAnalogCommand,
+        setUpMotorsCommand,
         exitConfigCommand,
     };
 
@@ -345,10 +365,21 @@ static void prepareInputSubReportInBuffer(uint8_t *buffer)
         commandToExecute_P = (const uint8_t *)pgm_read_ptr(commandQueue + commandQueueCursor);
     }
 
-    replyLength = dualShockCommand_P(commandToExecute_P + offsetof(DualShockCommand, commandSequence),
-                                     pgm_read_byte(commandToExecute_P + offsetof(DualShockCommand, length)),
-                                     (uint8_t *)&dualShockReports[thisDualShockReportIndex],
-                                     sizeof(DualShockReport));
+    uint8_t commandLength = pgm_read_byte(commandToExecute_P + offsetof(DualShockCommand, length));
+    uint8_t command[commandLength + 4];
+    memcpy_P(&command, commandToExecute_P + offsetof(DualShockCommand, commandSequence), commandLength);
+
+    // Ick to this special-casing...
+    if(command[0] == 0x42 && rumbleEnabled) {
+        commandLength += 2;
+        command[2] = 0; // Small motor. On = 0xff, Off = anything else.
+        command[3] = rumbleAmplitude; // Big motor. Practical rannge is 0x40 - 0xff.
+    }
+
+    replyLength = dualShockCommand(command,
+                                   commandLength,
+                                   (uint8_t *)&dualShockReports[thisDualShockReportIndex],
+                                   sizeof(DualShockReport));
 
     if(!executingCommandQueue) {
         if(replyLength >= 2) {
@@ -361,7 +392,7 @@ static void prepareInputSubReportInBuffer(uint8_t *buffer)
                 // is called.
                 commandQueue = enterAnalogCommandSequence;
                 commandQueueCursor = 0;
-                commandQueueLength = 3;
+                commandQueueLength = 4;
 
                 if(mode == 0x4) {
                     // If we're in digital  mode, it means the user pressed the
@@ -518,9 +549,10 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
     if(accumulatedReportBytes == 0) {
         reportId = data[0];
-        debugPrint("\n");
+        debugPrint("\n╭ ");
+    } else {
+        debugPrint("\n│ ");
     }
-    debugPrint("\nO: ");
     for(uint8_t i = 0; i < len; ++i) {
         debugPrintHex(data[i]);
     }
@@ -555,7 +587,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     // Deal with the report!
     const uint8_t commandOrSequenceNumber = reportIn[1];
     uint8_t uartCommand = 0;
-    debugPrint("\n\n> ");
+    debugPrint("\n╰ ");
     debugPrintHex(reportId);
     debugPrint(':');
     debugPrintHex(commandOrSequenceNumber);
@@ -682,7 +714,10 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             prepareUartReplyReport_P(0x83, uartCommand, NULL, 0);
             break;
         case 0x48: // Set vibration enabled state
-            prepareUartReplyReport_P(0x82, uartCommand, NULL, 0);
+            rumbleEnabled = reportIn[11];
+            debugPrint(" Rumble");
+            debugPrint(rumbleEnabled ? " enabled" : " disabled");
+            prepareUartReplyReport_P(0x80, uartCommand, NULL, 0);
             break;
         case 0x21: {// Set NFC/IR MCU config
             static const PROGMEM uint8_t reply[] = { 0x01, 0x00, 0xFF, 0x00, 0x08, 0x00, 0x1B, 0x01 };
@@ -705,10 +740,34 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             halt(uartCommand, "Unexpected UART subcommand");
             break;
         }
+    }
+    // No break here! We fall through to the 0x10 decoder because 0x01 reports
+    // also contain rumble data in the same place.
+    case 0x10: {
+        // Rumble data
+        // Example: O: 100E 0045 4052 0040 4052
+        if(rumbleEnabled) {
+            if(reportLength < 10) {
+                halt(reportLength, "Unexpected rumble data length");
+            }
+
+            uint8_t leftAmplitude = amplitudeFromRumbleState(reportIn + 2);
+            uint8_t rightAmplitude = amplitudeFromRumbleState(reportIn + 6);
+
+            rumbleAmplitude = leftAmplitude > rightAmplitude ? leftAmplitude : rightAmplitude;
+
+            uint16_t leftFrequency = frequencyFromRumbleState(reportIn + 2);
+            uint16_t rightFrequency = frequencyFromRumbleState(reportIn + 6);
+
+            rumbleFrequency = leftFrequency > rightFrequency ? leftFrequency : rightFrequency;
+
+            debugPrint(" Rumble Amp: ");
+            debugPrintHex(rumbleAmplitude);
+            debugPrint(" Rumble Freq: ");
+            debugPrintHex(rumbleFrequency >> 8);
+            debugPrintHex(rumbleFrequency & 0xff);
+        }
     } break;
-    case 0x10:
-        // Keep-alive?
-        break;
     case 0x00:
         // Not quite sure why we sometimes get reports with a 0 id.
         // The switch seems to stop talking to us if we don't reply with an
@@ -725,8 +784,8 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     // We store a small history of received commands to aid with debugging.
     if(reportId == 0x10) {
         // Because we get so many of these, coalesce runs of them in the history
-        // buffer. We use the second and third btes to store how many we've seen
-        // in a row.
+        // buffer. We use the second and third bytes to store how many we've
+        // seen in a row.
         if(sCommandHistory[sCommandHistoryCursor][0] != 0x10) {
             sCommandHistoryCursor = (sCommandHistoryCursor + 1) % sCommandHistoryLength;
             sCommandHistory[sCommandHistoryCursor][0] = 0x10;
@@ -828,8 +887,9 @@ static void ledHeartbeat()
         }
 
 #if DEBUG_PRINT_ON
-        debugPrint("\n\nFPS: ");
+        debugPrint(" [FPS: ");
         debugPrintDec(transmittedReportsCount);
+        debugPrint(']');
         transmittedReportsCount = 0;
 #endif
     }
