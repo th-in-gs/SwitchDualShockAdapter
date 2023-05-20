@@ -7,6 +7,7 @@
 
 #include "rumble.h"
 #include <avr/pgmspace.h>
+#include <string.h>
 #include <math.h>
 
 
@@ -141,6 +142,124 @@ static const PROGMEM uint8_t rumble_amp_lut[] = {
     floatToRumble(0.986048),
     floatToRumble(1.000000)
 };
+
+enum RumbleStateType {
+    RumbleStateTypeX0SingleWaveWithResonance,
+    RumbleStateType0100DualWave,
+    RumbleStateType0101Silent,
+    RumbleStateType0110DualResonanceWith3Pulse,
+    RumbleStateType11DualResonanceWith4Pulse,
+    RumbleStateTypeUnrecognized = 0xff
+};
+
+RumbleStateType rumbleStateTypeFromRumbleState(const uint8_t *rumbleState)
+{
+    switch((rumbleState[3] & 0b11000000) >> 4) {
+    case 0b00:
+    case 0b10:
+        return RumbleStateTypeX0SingleWaveWithResonance;
+    case 0b01:
+        switch(rumbleState[1] & 0b00000011) {
+        case 0b00:
+            return RumbleStateType0100DualWave;
+        case 0b01:
+            return RumbleStateType0101Silent;
+        case 0b10:
+            return RumbleStateType0110DualResonanceWith3Pulse;
+        }
+        break;
+    case 0b11:
+        return RumbleStateType11DualResonanceWith4Pulse;
+    }
+
+    return RumbleStateTypeUnrecognized;
+}
+
+struct DecodedRumbleState {
+    uint16_t lowChannelFrequency;
+    uint8_t lowChannelAmplitude;
+    uint16_t highChannelFrequency;
+    uint8_t highChannelAmplitude;
+    uint8_t pulse1Amplitude;
+    bool pulse1switch;
+    uint8_t pulse2Amplitude;
+    bool pulse2switch;
+    uint8_t pulse3Amplitude;
+    bool pulse3switch;
+    uint8_t pulse4Amplitude;
+    bool pulse4switch;
+    uint8_t hz400Amplitude;
+};
+
+void decodeRumble(const uint8_t *rumbleState)
+{
+    DecodedRumbleState decodedRumbleState;
+    DecodedRumbleState *pDecodedRumbleState = &decodedRumbleState;
+
+    memset(pDecodedRumbleState, 0, sizeof(DecodedRumbleState));
+
+    switch(rumbleStateTypeFromRumbleState(rumbleState)) {
+    case RumbleStateTypeX0SingleWaveWithResonance: {
+        bool isHighFrequency = (rumbleState[0] & 1) ? true : false;
+        uint8_t frequency4Bit = rumbleState[0] >> 1;
+
+        uint8_t highFreqAmplitude4Bit = rumbleState[1] & 0b00001111;
+        bool highFreqSwitch = (rumbleState[1] & 0b00010000) ? false : true;
+
+        uint8_t lowFreqAmplitude4Bit = (rumbleState[1] >> 5) | ((rumbleState[2] & 0x01) << 3);
+        bool lowFreqSwitch = (rumbleState[2] & 0b00000010) ? false : true;
+
+        uint8_t pulse1Amplitude4Bit = (rumbleState[2] >> 1) & 0x00001111;
+        bool pulse1Switch = (rumbleState[2] & 0b01000000) ? false : true;
+
+        uint8_t pulse2Amplitude7Bit = (rumbleState[3] & 0x00111111) << 1 | (rumbleState[2] >> 7);
+    } break;
+    case RumbleStateType0100DualWave: {
+        uint8_t highFreqFrequency7Bit = (rumbleState[0] >> 2) | ((rumbleState[1] & 1) << 6);
+        uint8_t highFreqAmplitude7Bit = rumbleState[1] >> 1;
+
+        uint8_t lowFreqFrequeny7Bit = rumbleState[2] & 0b01111111;
+        uint8_t lowFreqAmplitude7Bit = (rumbleState[2] >> 7) & ((rumbleState[2] & 0b00111111) << 1);
+    } break;
+    case RumbleStateType0110DualResonanceWith3Pulse: {
+        uint8_t highFreqAmplitude4Bit = (rumbleState[0] & 0b01111000) >> 3;
+        bool highFreqSwitch = (rumbleState[0] & 0b10000000) ? false : true;
+
+        uint8_t lowFreqAmplitude4Bit = (rumbleState[1] & 0b00001111);
+        bool lowFreqSwitch = (rumbleState[1] & 0b00010000) ? false : true;
+
+        uint8_t pulse1Amplitude4Bit = (rumbleState[1] >> 5) & ((rumbleState[2] & 1) << 3);
+        bool pulse1Switch = (rumbleState[2] & 0b00000010) ? false : true;
+
+        uint8_t pulse2Amplitude4Bit = (rumbleState[2] >> 2) & 0b00001111;
+        bool pulse2Switch = (rumbleState[2] & 0b01000000) ? false : true;
+
+        uint8_t pulse3Amplitude7Bit = (rumbleState[3] & 0b01111111);
+    } break;
+    case RumbleStateType11DualResonanceWith4Pulse: {
+        uint8_t highFreqAmplitude4Bit = rumbleState[0] & 0b00001111;
+        bool highFreqSwitch = (rumbleState[0] & 0b00010000) ? false : true;
+
+        uint8_t lowFreqAmplitude4Bit = (rumbleState[0] >> 5) | ((rumbleState[1] & 0x01) << 3);
+        bool lowFreqSwitch = (rumbleState[1] & 0b00000010) ? false : true;
+
+        uint8_t pulse1OrHz400Amplitude4Bit = (rumbleState[1] >> 2) & 0x00001111;
+        bool pulse1OrHz400Switch = (rumbleState[1] & 0b01000000) ? false : true;
+
+        uint8_t pulse2Amplitude4Bit = (rumbleState[1] >> 7) & ((rumbleState[2] & 0x111) << 1);
+        bool pulse2Switch = (rumbleState[2] & 0b00001000) ? false : true;
+
+        uint8_t pulse3Amplitude4Bit = rumbleState[2] >> 4;
+        bool pulse3Switch = (rumbleState[3] & 1) ? false : true;
+
+        uint8_t pulse4Amplitude4Bit = ((rumbleState[3] >> 1) & 0b00001111);
+        bool pulse4Switch = (rumbleState[3] & 0b00100000) ? false : true;
+    } break;
+    case RumbleStateType0101Silent:
+    default:
+        break;
+    }
+}
 
 uint8_t amplitudeFromRumbleState(const uint8_t *rumbleState)
 {
