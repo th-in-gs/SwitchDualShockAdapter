@@ -1,5 +1,6 @@
 #include "serial.h"
 #include "timer.h"
+#include "packedStrings.h"
 
 #include "descriptors.h"
 #include "rumble.h"
@@ -27,10 +28,12 @@ extern "C" {
 #define DEBUG_PRINT_ON 1
 #if DEBUG_PRINT_ON
 #define debugPrint(...) serialPrint(__VA_ARGS__)
+#define debugPrintStr6(...) serialPrintStr6(__VA_ARGS__)
 #define debugPrintHex(...) serialPrintHex(__VA_ARGS__)
 #define debugPrintDec(...) serialPrintDec(__VA_ARGS__)
 #else
 #define debugPrint(...)
+#define debugPrintStr6(...)
 #define debugPrintHex(...)
 #define debugPrintDec(...)
 #endif
@@ -119,17 +122,17 @@ static const uint8_t sCommandHistoryLength = 32;
 static uint8_t sCommandHistory[sCommandHistoryLength][3] = {0};
 static uint8_t sCommandHistoryCursor = 0;
 
-static bool rumbleEnabled = false;
-static uint8_t rumbleAmplitude = 0;
-static uint16_t rumbleFrequency = 0;
+static bool sRumbleEnabled = false;
+static uint8_t sLowRumbleAmplitude = 0;
+static uint8_t sHighRumbleAmplitude = 0;
 
-static void halt(uint8_t i, const char *message = NULL)
+static void haltStr6(uint8_t i, const uint8_t *messageStr6 = NULL)
 {
-    serialPrint("HALT: 0x", true);
+    serialPrintStr6(STR6("HALT: 0x"), true);
     serialPrintHex(i, true);
-    if(message) {
+    if(messageStr6) {
         serialPrint(' ', true);
-        serialPrint(message, true);
+        serialPrintStr6(messageStr6, true);
     }
     serialPrint('\n', true);
     for(uint8_t i = 0; i < sCommandHistoryLength; ++i) {
@@ -355,25 +358,36 @@ static void prepareInputSubReportInBuffer(uint8_t *buffer)
     uint8_t thisDualShockReportIndex = (uint8_t)(previousDualShockReportIndex + 1) % 2;
 
     const bool executingCommandQueue = (commandQueueCursor < commandQueueLength);
-    const uint8_t *commandToExecute_P;
+    const DualShockCommand *commandToExecute_P;
 
     if(!executingCommandQueue) {
         // If there's no command queue (the usual case), we just poll
         // controller state.
-        commandToExecute_P = (const uint8_t *)pollCommand;
+        commandToExecute_P = pollCommand;
     } else {
-        commandToExecute_P = (const uint8_t *)pgm_read_ptr(commandQueue + commandQueueCursor);
+        commandToExecute_P = (DualShockCommand *)pgm_read_ptr(commandQueue + commandQueueCursor);
     }
 
-    uint8_t commandLength = pgm_read_byte(commandToExecute_P + offsetof(DualShockCommand, length));
+    uint8_t commandLength = pgm_read_byte((uint8_t *)commandToExecute_P + offsetof(DualShockCommand, length));
     uint8_t command[commandLength + 4];
     memcpy_P(&command, commandToExecute_P + offsetof(DualShockCommand, commandSequence), commandLength);
 
     // Ick to this special-casing...
-    if(command[0] == 0x42 && rumbleEnabled) {
+    if(commandToExecute_P == pollCommand && sRumbleEnabled) {
+        const uint8_t lowRumbleAmplitude = sLowRumbleAmplitude;// ? sLowRumbleAmplitude : sHighRumbleAmplitude;
+        const uint8_t highRumbleAmplitude = sHighRumbleAmplitude;// ? sHighRumbleAmplitude : sLowRumbleAmplitude;
+
+        bool highRumbleOn = false;
+        if(highRumbleAmplitude) {
+            static uint8_t activationCount = 0;
+            const uint8_t duty_cycle = 0x0f / (highRumbleAmplitude >> 4);
+            activationCount = (activationCount + 1) % duty_cycle;
+            highRumbleOn = (activationCount == 0);
+        }
+
         commandLength += 2;
-        command[2] = 0; // Small motor. On = 0xff, Off = anything else.
-        command[3] = rumbleAmplitude; // Big motor. Practical rannge is 0x40 - 0xff.
+        command[2] = highRumbleOn ? 0xff : 0; // Small motor. On = 0xff, Off = anything else. High
+        command[3] = lowRumbleAmplitude; // Big motor. Practical range is 0x40 - 0xff. Low
     }
 
     replyLength = dualShockCommand(command,
@@ -383,7 +397,7 @@ static void prepareInputSubReportInBuffer(uint8_t *buffer)
 
     if(!executingCommandQueue) {
         if(replyLength >= 2) {
-            uint8_t mode = dualShockReports[thisDualShockReportIndex].deviceMode;
+            const uint8_t mode = dualShockReports[thisDualShockReportIndex].deviceMode;
 
             if(mode != 0x7) {
                 // If we're _not_ in analog mode, initiate the sequence of
@@ -454,7 +468,7 @@ static void prepareInputReport()
 static void prepareRegularReplyReport_P(uint8_t reportId, uint8_t reportCommand, const uint8_t *reportIn, uint8_t reportInLen)
 {
     if(sReportPending) {
-        halt(0, "Report Clash");
+        haltStr6(0, STR6("Report Clash"));
         return;
     }
 
@@ -472,7 +486,7 @@ static void prepareUartReplyReport_F(uint8_t ack, uint8_t subCommand, const uint
     // '_F' - means pass in function to use for memcpying.
 
     if(sReportPending) {
-        halt(0, "Report Clash");
+        haltStr6(0, STR6("Report Clash"));
         return;
     }
 
@@ -493,7 +507,7 @@ static void prepareUartReplyReport_F(uint8_t ack, uint8_t subCommand, const uint
         const uint8_t reportSizeBeforeCopy = reportLength;
         reportLength += reportInLen;
         if(reportLength > sReportSize) {
-            halt(0, "Report Too Big");
+            haltStr6(0, STR6("Report Too Big"));
             return;
         }
         copyFunction(&report[reportSizeBeforeCopy], reportIn, reportInLen);
@@ -533,6 +547,27 @@ static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t length, const 
     return prepareUartReplyReport(0x90, 0x10, buffer, bufferLength);
 }
 
+uint8_t highestByteFromNBytes(int count, ...)
+{
+    va_list args;
+    va_start(args, count);
+
+    uint8_t highestByte = 0;
+
+    for (int i = 0; i < count; i++)
+    {
+        uint8_t value = uint8_t(va_arg(args, int));
+        if (value > highestByte)
+        {
+            highestByte = value;
+        }
+    }
+
+    va_end(args);
+
+    return highestByte;
+}
+
 static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAbandonAccumulatedReport)
 {
     static uint8_t reportId;
@@ -549,9 +584,9 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
     if(accumulatedReportBytes == 0) {
         reportId = data[0];
-        debugPrint("\n╭ ");
+        debugPrintStr6(STR6("\n/ ")) ;
     } else {
-        debugPrint("\n│ ");
+        debugPrintStr6(STR6("\n| ")) ;
     }
     for(uint8_t i = 0; i < len; ++i) {
         debugPrintHex(data[i]);
@@ -587,7 +622,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     // Deal with the report!
     const uint8_t commandOrSequenceNumber = reportIn[1];
     uint8_t uartCommand = 0;
-    debugPrint("\n╰ ");
+    debugPrintStr6(STR6("\n\\ ")) ;
     debugPrintHex(reportId);
     debugPrint(':');
     debugPrintHex(commandOrSequenceNumber);
@@ -622,7 +657,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             prepareRegularReplyReport_P(0x81, command, NULL, 0);
         } break;
         default: {
-            halt(uartCommand, "Unexpected 'regular' subcommand");
+            haltStr6(uartCommand, STR6("Unexpected 'regular' subcommand")) ;
             prepareRegularReplyReport_P(0x81, command, NULL, 0);
         } break;
         }
@@ -705,7 +740,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 spiReplyLength = sizeof(reply);
             } break;
             default:
-                halt(address & 0xff, "Unexpected SPI read subcommand");
+                haltStr6(address & 0xff, STR6("Unexpected SPI read subcommand")) ;
                 break;
             }
             prepareUartSpiReplyReport_P(address, length, spiReply, spiReplyLength);
@@ -714,9 +749,9 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             prepareUartReplyReport_P(0x83, uartCommand, NULL, 0);
             break;
         case 0x48: // Set vibration enabled state
-            rumbleEnabled = reportIn[11];
-            debugPrint(" Rumble");
-            debugPrint(rumbleEnabled ? " enabled" : " disabled");
+            sRumbleEnabled = reportIn[11];
+            debugPrintStr6(STR6(" Rumble")) ;
+            debugPrintStr6(sRumbleEnabled ? STR6(" enabled") : STR6(" disabled"));
             prepareUartReplyReport_P(0x80, uartCommand, NULL, 0);
             break;
         case 0x21: {// Set NFC/IR MCU config
@@ -737,7 +772,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             break;
         default:
             prepareUartReplyReport_P(0x80, uartCommand, NULL, 0);
-            halt(uartCommand, "Unexpected UART subcommand");
+            haltStr6(uartCommand, STR6("Unexpected UART subcommand")) ;
             break;
         }
     }
@@ -746,26 +781,29 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     case 0x10: {
         // Rumble data
         // Example: O: 100E 0045 4052 0040 4052
-        if(rumbleEnabled) {
+        if(sRumbleEnabled) {
             if(reportLength < 10) {
-                halt(reportLength, "Unexpected rumble data length");
+                haltStr6(reportLength, STR6("Unexpected rumble data length")) ;
             }
 
-            uint8_t leftAmplitude = amplitudeFromRumbleState(reportIn + 2);
-            uint8_t rightAmplitude = amplitudeFromRumbleState(reportIn + 6);
+            SwitchRumbleState leftRumbleState;
+            SwitchRumbleState rightRumbleState;
 
-            rumbleAmplitude = leftAmplitude > rightAmplitude ? leftAmplitude : rightAmplitude;
+            decodeSwitchRumbleState(reportIn + 2, &leftRumbleState);
+            decodeSwitchRumbleState(reportIn + 6, &rightRumbleState);
 
-            uint16_t leftFrequency = frequencyFromRumbleState(reportIn + 2);
-            uint16_t rightFrequency = frequencyFromRumbleState(reportIn + 6);
+            sLowRumbleAmplitude = highestByteFromNBytes(10, leftRumbleState.lowChannelAmplitude, rightRumbleState.lowChannelAmplitude,
+                                                        leftRumbleState.pulse1Amplitude, leftRumbleState.pulse2Amplitude, leftRumbleState.pulse3Amplitude, leftRumbleState.pulse1Amplitude,
+                                                        rightRumbleState.pulse1Amplitude, rightRumbleState.pulse2Amplitude, rightRumbleState.pulse3Amplitude, leftRumbleState.pulse1Amplitude);
+            sHighRumbleAmplitude = highestByteFromNBytes(10, leftRumbleState.highChannelAmplitude, rightRumbleState.highChannelAmplitude,
+                                                         leftRumbleState.pulse1Amplitude, leftRumbleState.pulse2Amplitude, leftRumbleState.pulse3Amplitude, leftRumbleState.pulse1Amplitude,
+                                                         rightRumbleState.pulse1Amplitude, rightRumbleState.pulse2Amplitude, rightRumbleState.pulse3Amplitude, leftRumbleState.pulse1Amplitude);
 
-            rumbleFrequency = leftFrequency > rightFrequency ? leftFrequency : rightFrequency;
-
-            debugPrint(" Rumble Amp: ");
-            debugPrintHex(rumbleAmplitude);
-            debugPrint(" Rumble Freq: ");
-            debugPrintHex(rumbleFrequency >> 8);
-            debugPrintHex(rumbleFrequency & 0xff);
+            debugPrintStr6(STR6(" Rumble: ("));
+            debugPrintDec(sLowRumbleAmplitude);
+            debugPrint(',');
+            debugPrintDec(sHighRumbleAmplitude);
+            debugPrint(')');
         }
     } break;
     case 0x00:
@@ -777,7 +815,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         break;
     default:
         // We should never reach here because we should've halted above.
-        halt(reportId, "Unexpected report ID");
+        haltStr6(reportId, STR6("Unexpected report ID")) ;
         break;
     }
 
@@ -804,7 +842,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
     }
 
     // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
-    debugPrint(" [OSC: ");
+    debugPrintStr6(STR6(" [OSC: ")) ;
     debugPrintDec(OSCCAL);
     debugPrint(']');
 
@@ -833,23 +871,23 @@ void usbFunctionRxHook(const uchar *data, const uchar len)
             // feature that's being cleared - but HALT is the only feature that
             // _can_ be cleared on an interrupt endpoint, so it's not actually
             // necessary to check.
-            debugPrint("\n!Clear HALT ");
-            debugPrint(request->wIndex.bytes[0], 16);
-            debugPrint("!\n");
+            debugPrintStr6(STR6("\n!CLR HALT ")) ;
+            debugPrintHex(request->wIndex.bytes[0]);
+            debugPrint('\n') ;
             usbFunctionWriteOutOrAbandon(NULL, 0, true);
         }
     }
 
     if(usbCrc16(data, len + 2) != 0x4FFE) {
-        halt(0, "CRC error!");
+        haltStr6(0, STR6("CRC error!")) ;
     }
 }
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
-    serialPrint("\n\nUnexpected setup transaction - data is: ");
+    serialPrintStr6(STR6("\n\nUnexpected setup transaction - data is: "));
     for(uint8_t i = 0; i < 8; ++i) {
-        serialPrint(data[i]);
+        serialPrintHex(data[i]);
     }
 
     // I've never seen this called when connected to a Switch or a Mac.
@@ -887,7 +925,7 @@ static void ledHeartbeat()
         }
 
 #if DEBUG_PRINT_ON
-        debugPrint(" [FPS: ");
+        debugPrintStr6(STR6(" [FPS: ")) ;
         debugPrintDec(transmittedReportsCount);
         debugPrint(']');
         transmittedReportsCount = 0;
@@ -929,7 +967,7 @@ static void transmitPacket()
                 // report, the reply to it can be prepared while we're sending
                 // this report.
                 // This doesn't seem to happen very much.
-                sCurrentReport = (transmittingReportIndex + 1) % 2;
+                sCurrentReport = (uint8_t)(transmittingReportIndex + 1) % 2;
                 sReportPending = false;
             }
         }
@@ -1014,7 +1052,7 @@ void loop()
         lastSofTime = millisNow;
         if(sUsbSuspended) {
             sUsbSuspended = false;
-            debugPrint("\nUSB Active\n");
+            debugPrintStr6(STR6("\nUSB Active\n")) ;
         }
     }
 
@@ -1022,7 +1060,7 @@ void loop()
         // No USB activity for over 3ms - we've detected a USB sleep.
         // (USB 2.0 spec: "7.1.7.6 Suspending")
         sUsbSuspended = true;
-        debugPrint("\nUSB Suspended\n");
+        debugPrintStr6(STR6("\nUSB Suspended\n")) ;
     }
 
     if(!sUsbSuspended ) {
@@ -1049,7 +1087,7 @@ void loop()
         sleep_cpu();
 
         // USB traffic firing INT0 will wake us up.
-        debugPrint("Awake\n");
+        debugPrintStr6(STR6("Awake\n")) ;
     }
 }
 

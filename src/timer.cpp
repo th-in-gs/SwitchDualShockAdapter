@@ -25,7 +25,7 @@ static const uint8_t sTimerZeroOverflowsPer256Millis = F_CPU / 64000;
 static volatile uint8_t sTimer0FireCount = 0;
 
 ISR(TIMER0_OVF_vect, ISR_NOBLOCK) {
-    sTimer0FireCount = (sTimer0FireCount + 1) % sTimerZeroOverflowsPer256Millis;
+    sTimer0FireCount = (uint8_t)(sTimer0FireCount + 1) % sTimerZeroOverflowsPer256Millis;
 }
 
 uint8_t timerMillis() {
