@@ -175,6 +175,7 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
     uint8_t byteIndex = 0;
     uint8_t reportedTransactionLength = 2;
     bool byteAcknowledged = false;
+    bool errored = false;
     do {
         // This will be set to true by the interrupt routine, above,
         // when the Dual Shock sends its acknowledge signal.
@@ -206,6 +207,11 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
             // The byte in position 1 contains the length to expect _after
             // the header_ in its lower nybble.
             reportedTransactionLength = ((received & 0xf) * 2) + 3;
+        } else if(byteIndex == 2) {
+            if(received != 0x5a) {
+                    errored = true;
+                    break;
+            }
         }
 
         if(byteIndex < toReceiveLength) {
@@ -228,7 +234,7 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
                     // Detect this and bail.
                     // We'll return failure from this function, and it's up to
                     // the caller to try again if they want to.
-                    byteIndex = 0;
+                    errored = true;
                     break;
                 }
                 _delay_us(2);
@@ -236,7 +242,7 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
                 byteAcknowledged = sDualShockAcknowledgeReceived;
             }
         }
-    } while(byteAcknowledged);
+    } while(!errored && byteIndex < reportedTransactionLength);
 
     // Despite the fact that the controller doens't raise the acknowledge line
     // for the last byte, we still seem to need to wait a bit for communication
@@ -247,7 +253,7 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
     // each transaction.
     PORTB |= 1 << 2;
 
-    return byteIndex;
+    return errored ? 0 : byteIndex;
 }
 
 static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
@@ -783,7 +789,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         // Example: O: 100E 0045 4052 0040 4052
         if(sRumbleEnabled) {
             if(reportLength < 10) {
-                haltStr6(reportLength, STR6("Unexpected rumble data length")) ;
+                haltStr6(reportLength, STR6("Unexpected rumble data length"));
             }
 
             SwitchRumbleState leftRumbleState;
