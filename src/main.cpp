@@ -88,8 +88,13 @@ void setup()
 
     // Set up Interrupt 1 to fire when the the Dual Shock 'Acknowledge' line
     // goes low.
+#if __AVR_ATmega8__
     MCUCR |= 1 << ISC11 | 1 << ISC10;
     GICR |= 1 << INT1;
+#else
+    EICRA |= 1 << ISC11 | 1 << ISC10;
+    EIMSK |= 1 << INT1;
+#endif
 
     // Disable interrupts for USB reset.
     cli();

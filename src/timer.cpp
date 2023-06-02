@@ -7,12 +7,20 @@
 // the number of timer fires it would take to get to 256ms.
 
 void timerInit() {
-    // Timer set to increment every F_CPU / 64 cycles
-    // (this is necessary for the osccal.h oscilator calibration to work!)
+// Timer set to increment every F_CPU / 64 cycles
+// (this is necessary for the osccal.h oscilator calibration to work!)
+#if __AVR_ATmega8__
     TCCR0 = (TCCR0 & ~0b111) | 0b011;
+#else
+    TCCR0B = (TCCR0B & ~0b111) | 0b011;
+#endif
 
     // Enable the interupt.
+#if __AVR_ATmega8__
     TIMSK |= 1 << TOIE0;
+#else
+    TIMSK0 |= 1 << TOIE0;
+#endif
 }
 
 // (F_CPU / 64) = Timer counts per second.

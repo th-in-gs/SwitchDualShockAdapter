@@ -9,22 +9,37 @@ static uint8_t sSerialOutputBuffer[sSerialOutputBufferLength];
 static uint8_t sSerialOutputBufferStart = 0;
 static uint8_t sSerialOutputBufferEnd = 0;
 
+
 void serialInit(const uint32_t baudRate)
 {
     const uint16_t ubrr = (F_CPU + (baudRate * 4)) / (baudRate * 16) - 1;
 
+#ifdef __AVR_ATmega8__
     UBRRH = (uint8_t)(ubrr >> 8);
     UBRRL = (uint8_t)ubrr;
 
     UCSRB = (1 << TXEN);
     UCSRC = (1 << URSEL) | (1 << UCSZ1) | (1 << UCSZ0);
+#else
+    UBRR0H = (uint8_t)(ubrr >> 8);
+    UBRR0L = (uint8_t)ubrr;
+
+    UCSR0B = (1 << TXEN0);
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);
+#endif
 }
 
 void serialPoll()
 {
     if(sSerialOutputBufferStart != sSerialOutputBufferEnd) {
+#ifdef __AVR_ATmega8__
         if(UCSRA & (1 << UDRE)) {
-            UDR = sSerialOutputBuffer[sSerialOutputBufferStart];
+            UDR =
+#else
+        if(UCSR0A & (1 << UDRE0)) {
+            UDR0 =
+#endif
+                sSerialOutputBuffer[sSerialOutputBufferStart];
             sSerialOutputBufferStart = (uint8_t)(sSerialOutputBufferStart + 1) % sSerialOutputBufferLength;
         }
     }
