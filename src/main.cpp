@@ -213,7 +213,10 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
             // the header_ in its lower nybble.
             reportedTransactionLength = ((received & 0xf) * 2) + 3;
         } else if(byteIndex == 2) {
-            if(received != 0x5a) {
+            // Online docs suggest this is _always_ 0x5a, but in reality it's
+            // 0x00 after the 'ANALOG' button has been pressed (unfortunately
+            // not _while_ it's being pressed).
+            if(received != 0x5a && received != 0x00) {
                     errored = true;
                     break;
             }
