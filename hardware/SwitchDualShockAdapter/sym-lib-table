@@ -1,0 +1,4 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "SwitchDualShockAdapter")(type "KiCad")(uri "${KIPRJMOD}/SwitchDualShockAdapter.kicad_sym")(options "")(descr ""))
+)
