@@ -46,7 +46,12 @@ void setup()
     // by starting here.
     // As well as helping USB communication to start up faster, this also helps
     // to get serial debug output working earlier.
+
+#if __AVR_ATmega8__
     OSCCAL = 240;
+#else
+    OSCCAL = 226;
+#endif
 
     // Set up sleep mode. This doesn't actually put the device to sleep yet -
     // It just sets the mode that will be used when `sleep_cpu()` is called.
@@ -388,11 +393,13 @@ static void prepareInputSubReportInBuffer(uint8_t *buffer)
 
     // Ick to this special-casing...
     if(commandToExecute_P == pollCommand && sRumbleEnabled) {
-        const uint8_t lowRumbleAmplitude = sLowRumbleAmplitude;// ? sLowRumbleAmplitude : sHighRumbleAmplitude;
-        const uint8_t highRumbleAmplitude = sHighRumbleAmplitude;// ? sHighRumbleAmplitude : sLowRumbleAmplitude;
+        const uint8_t lowRumbleAmplitude = sLowRumbleAmplitude ?: sHighRumbleAmplitude;
+        const uint8_t highRumbleAmplitude = sHighRumbleAmplitude ?: sLowRumbleAmplitude;
 
         bool highRumbleOn = false;
         if(highRumbleAmplitude) {
+            // The small motor is only either on or off, so we do some crude
+            // PWM here to simulate the amplitude.
             static uint8_t activationCount = 0;
             const uint8_t duty_cycle = 0x0f / (highRumbleAmplitude >> 4);
             activationCount = (activationCount + 1) % duty_cycle;
@@ -855,11 +862,6 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         sCommandHistory[sCommandHistoryCursor][2] = uartCommand;
     }
 
-    // Let's see how the 12.8MHz tuning for the internal oscillator is doing.
-    debugPrintStr6(STR6(" [OSC: ")) ;
-    debugPrintDec(OSCCAL);
-    debugPrint(']');
-
     // We're ready for another report.
     accumulatedReportBytes = 0;
 }
@@ -939,9 +941,15 @@ static void ledHeartbeat()
         }
 
 #if DEBUG_PRINT_ON
-        debugPrintStr6(STR6(" [FPS: ")) ;
+        // Print the report rate::
+        debugPrintStr6(STR6(" [FPS: "));
         debugPrintDec(transmittedReportsCount);
+        // Let's also see how the 12.8MHz tuning for the internal oscillator is
+        // doing.
+        debugPrintStr6(STR6("] [OSC: "));
+        debugPrintDec(OSCCAL);
         debugPrint(']');
+
         transmittedReportsCount = 0;
 #endif
     }
