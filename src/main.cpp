@@ -1034,8 +1034,11 @@ static void transmitPacket()
 #if 0
 static void usbResume()
 {
-    // This doesn't seem to work, but I leave it here for potential future use.
-    // Reportedly the Switch does not respond to USB resume requests.
+    // Would be nice to wake the Switch on a button press on the Dual Shock.
+    // Thos would require fairly frequent polling of the Dual Shock.
+    // ...but:
+    // Waking doesn't seem to work. Reportedly the Switch does not respond to
+    // USB resume requests. I leave this here for potential future use.
     cli();
     uint8_t outWas = USBOUT;
     uint8_t ddrWas = USBDDR;
@@ -1073,7 +1076,12 @@ void loop()
         lastSofCount = sofCountNow;
         lastSofTime = millisNow;
         if(sUsbSuspended) {
+            // We were suspended, but V-USB detected a SOF. Time to unsuspend.
             sUsbSuspended = false;
+
+            // Switch on the debug LED immediately.
+            PORTB &= ~(1 << 0);
+
             debugPrintStr6(STR6("\nUSB Active\n")) ;
         }
     }
