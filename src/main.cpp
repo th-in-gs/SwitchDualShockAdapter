@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 #include <avr/pgmspace.h>
 #include <avr/interrupt.h>
@@ -274,13 +275,25 @@ static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
     const int16_t yDiff = (int16_t)*y - 0x80;
     const int16_t distance_squared = (xDiff * xDiff) + (yDiff * yDiff);
 
-    static const int16_t deadZoneRadiusSquared = pow(ceil(0xff / 10), 2);
+    static const int16_t deadZoneRadiusSquared = pow(ceil(0xff * 0.15), 2);
 
     if (distance_squared <= deadZoneRadiusSquared) {
         *x = 0x80;
         *y = 0x80;
     }
 }
+
+static uint16_t eightBitToTwelveBit(const uint16_t eightBit)
+{
+    // return (eightBit << 4) | (eightBit >> 4);
+    uint32_t builder = (uint32_t)eightBit * (uint32_t)0xfff;
+    uint16_t twelveBit = builder / (uint32_t)0xff;
+    return twelveBit;
+}
+
+// Weird extern declaration to keep VS Code happy. It's not actually necessary
+// for compilation, but Intellisense can't find a declaration when editing
+extern uint8_t (__builtin_avr_insert_bits)(uint32_t, uint8_t, uint8_t);
 
 static void convertDualShockToSwitch(const DualShockReport *dualShockReport, SwitchReport *switchReport)
 {
@@ -293,6 +306,17 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     // Dual Shock buttons are 'active low' (0 = on, 1 = off), so we need to
     // invert their value before assigning to the Switch report.
 
+    uint8_t dualShockButtons1 = ~dualShockReport->buttons1;
+    uint8_t dualShockButtons2 = ~dualShockReport->buttons2;
+
+    // Use GCC bit insertion intrinsics to do the same as the commented out
+    // code below (more efficient - but really to save code space)
+    switchReport->buttons1 = __builtin_avr_insert_bits(0x13ff5647, dualShockButtons2, 0);
+    switchReport->buttons2 = __builtin_avr_insert_bits(0xffff1230, dualShockButtons1, 0);
+    switchReport->buttons3 = __builtin_avr_insert_bits(0x02ffffff, dualShockButtons2, 0);
+    switchReport->buttons3 = __builtin_avr_insert_bits(0xffff7546, dualShockButtons1, switchReport->buttons3);
+
+/*
     switchReport->yButton = !dualShockReport->squareButton;
     switchReport->xButton = !dualShockReport->triangleButton;
     switchReport->bButton = !dualShockReport->crossButton;
@@ -311,7 +335,7 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     switchReport->leftButton = !dualShockReport->leftButton;
     switchReport->lShoulderButton = !dualShockReport->l1Button;
     switchReport->zLShoulderButton = !dualShockReport->l2Button;
-
+*/
 
     // The Switch has 12-bit analog sticks. The Dual Shock has 8-bit.
     // We replicate the high 4 bits into the bottom 4 bits of the
@@ -327,16 +351,22 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     uint8_t leftStickX = dualShockReport->leftStickX;
     uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
     deadZoneizeStickPosition(&leftStickX, &leftStickY);
-    switchReport->leftStick[2] = leftStickY;
-    switchReport->leftStick[1] = (leftStickY & 0xf0) | (leftStickX >> 4);
-    switchReport->leftStick[0] = (leftStickX << 4) | (leftStickX >> 4);
+
+    uint16_t leftStickY12 = eightBitToTwelveBit(leftStickY);
+    uint16_t leftStickX12 = eightBitToTwelveBit(leftStickX);
+    switchReport->leftStick[2] = leftStickY12 >> 4;
+    switchReport->leftStick[1] = ((leftStickY12 & 0xf) << 4) | (leftStickX12 >> 8);
+    switchReport->leftStick[0] = leftStickX12 & 0xff;
 
     uint8_t rightStickX = dualShockReport->rightStickX;
     uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
     deadZoneizeStickPosition(&rightStickX, &rightStickY);
-    switchReport->rightStick[2] = rightStickY;
-    switchReport->rightStick[1] = (rightStickY & 0xf0) | (rightStickX >> 4);
-    switchReport->rightStick[0] = (rightStickX << 4) | (rightStickX >> 4);
+
+    uint16_t rightStickY12 = eightBitToTwelveBit(rightStickY);
+    uint16_t rightStickX12 = eightBitToTwelveBit(rightStickX);
+    switchReport->rightStick[2] = rightStickY12 >> 4;
+    switchReport->rightStick[1] = ((rightStickY12 & 0xf) << 4) | (rightStickX12 >> 8);
+    switchReport->rightStick[0] = rightStickX12 & 0xff;
 }
 
 static void prepareInputSubReportInBuffer(uint8_t *buffer)
@@ -605,12 +635,13 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
     if(accumulatedReportBytes == 0) {
         reportId = data[0];
-        debugPrintStr6(STR6("\n/ ")) ;
+        debugPrintStr6(STR6("\n/ -> ")) ;
     } else {
-        debugPrintStr6(STR6("\n| ")) ;
+        debugPrintStr6(STR6("\n| ...")) ;
     }
     for(uint8_t i = 0; i < len; ++i) {
         debugPrintHex(data[i]);
+        debugPrint(' ');
     }
 
     // USB signifies end-of-transfer as either a 'short' packet (not 8 bytes), or
@@ -678,7 +709,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             prepareRegularReplyReport_P(0x81, command, NULL, 0);
         } break;
         default: {
-            haltStr6(uartCommand, STR6("Unexpected 'regular' subcommand")) ;
+            haltStr6(uartCommand, STR6("Bad 'regular' subcommand")) ;
             prepareRegularReplyReport_P(0x81, command, NULL, 0);
         } break;
         }
@@ -761,7 +792,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 spiReplyLength = sizeof(reply);
             } break;
             default:
-                haltStr6(address & 0xff, STR6("Unexpected SPI read subcommand")) ;
+                haltStr6(address & 0xff, STR6("Bad SPI read subcommand")) ;
                 break;
             }
             prepareUartSpiReplyReport_P(address, length, spiReply, spiReplyLength);
@@ -793,7 +824,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             break;
         default:
             prepareUartReplyReport_P(0x80, uartCommand, NULL, 0);
-            haltStr6(uartCommand, STR6("Unexpected UART subcommand")) ;
+            haltStr6(uartCommand, STR6("Bad UART subcommand")) ;
             break;
         }
     }
@@ -804,7 +835,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         // Example: O: 100E 0045 4052 0040 4052
         if(sRumbleEnabled) {
             if(reportLength < 10) {
-                haltStr6(reportLength, STR6("Unexpected rumble data length"));
+                haltStr6(reportLength, STR6("Bad rumble length"));
             }
 
             SwitchRumbleState leftRumbleState;
@@ -836,7 +867,7 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         break;
     default:
         // We should never reach here because we should've halted above.
-        haltStr6(reportId, STR6("Unexpected report ID")) ;
+        haltStr6(reportId, STR6("Bad report ID")) ;
         break;
     }
 
@@ -895,13 +926,13 @@ void usbFunctionRxHook(const uchar *data, const uchar len)
     }
 
     if(usbCrc16(data, len + 2) != 0x4FFE) {
-        haltStr6(0, STR6("CRC error!")) ;
+        haltStr6(0, STR6("Bad CRC")) ;
     }
 }
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
 {
-    serialPrintStr6(STR6("\n\nUnexpected setup transaction - data is: "));
+    serialPrintStr6(STR6("\n\nBad setup transaction. Data: "));
     for(uint8_t i = 0; i < 8; ++i) {
         serialPrintHex(data[i]);
     }
@@ -1082,7 +1113,7 @@ void loop()
             // Switch on the debug LED immediately.
             PORTB &= ~(1 << 0);
 
-            debugPrintStr6(STR6("\nUSB Active\n")) ;
+            debugPrintStr6(STR6("\nUSB Up\n")) ;
         }
     }
 
@@ -1090,7 +1121,7 @@ void loop()
         // No USB activity for over 3ms - we've detected a USB sleep.
         // (USB 2.0 spec: "7.1.7.6 Suspending")
         sUsbSuspended = true;
-        debugPrintStr6(STR6("\nUSB Suspended\n")) ;
+        debugPrintStr6(STR6("\nUSB Down\n"), true) ;
     }
 
     if(!sUsbSuspended ) {
