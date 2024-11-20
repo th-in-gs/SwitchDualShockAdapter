@@ -258,10 +258,10 @@ void decodeSwitchRumbleState(const uint8_t *encodedRumbleState, SwitchRumbleStat
 
     RumbleStateType rumbleStateType = rumbleStateTypeFromEncodedRumbleState(encodedRumbleState);
 
-    serialPrintStr6(STR6(" <"));
-    serialPrintHex(rumbleStateType >> 8);
-    serialPrintHex(rumbleStateType & 0xFF);
-    serialPrint('>');
+    debugPrintStr6(STR6(" <"));
+    debugPrintHex(rumbleStateType >> 8);
+    debugPrintHex(rumbleStateType & 0xFF);
+    debugPrint('>');
 
     // Ugh. Literally everything about the order of this buffer - both the bit
     // order and the byte order - are the wrong way round for AVR...

@@ -1,3 +1,6 @@
+#ifndef __rumble_h_included__
+#define __rumble_h_included__
+
 #include <stdint.h>
 
 #define RUMBLE_INCLUDE_FREQUENCY 0
@@ -16,3 +19,5 @@ struct SwitchRumbleState {
 };
 
 void decodeSwitchRumbleState(const uint8_t *encodedRumbleState, SwitchRumbleState *switchRumbleStateOut);
+
+#endif // __rumble_h_included__

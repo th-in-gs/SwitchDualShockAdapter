@@ -1,3 +1,6 @@
+#ifndef __timer_h_included__
+#define __timer_h_included__
+
 #include <stdint.h>
 
 // This is a interrupt-free simple interface for serial output. It buffers the characters sent to it.
@@ -14,3 +17,22 @@ void serialPrint(const uint8_t ch, const bool wait = false);
 void serialPrintStr6(const uint8_t *str6, const bool wait = false);
 void serialPrintHex(uint8_t byte, const bool wait = false);
 void serialPrintDec(const uint8_t ch, const bool wait = false);
+
+#ifndef DEBUG_PRINT_ON
+#define DEBUG_PRINT_ON 0
+#endif
+
+
+#if DEBUG_PRINT_ON
+#define debugPrint(...) serialPrint(__VA_ARGS__)
+#define debugPrintStr6(...) serialPrintStr6(__VA_ARGS__)
+#define debugPrintHex(...) serialPrintHex(__VA_ARGS__)
+#define debugPrintDec(...) serialPrintDec(__VA_ARGS__)
+#else
+#define debugPrint(...)
+#define debugPrintStr6(...)
+#define debugPrintHex(...)
+#define debugPrintDec(...)
+#endif
+
+#endif // __timer_h_included__

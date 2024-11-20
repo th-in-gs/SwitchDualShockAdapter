@@ -1,3 +1,6 @@
+#ifndef __packedstrings_h_included__
+#define __packedstrings_h_included__
+
 #include <stdio.h>
 #include <stdint.h>
 #include <ctype.h>
@@ -59,3 +62,5 @@ struct PackedStringConstexpr {
         }
     }
 };
+
+#endif // __packedstrings_h_included__

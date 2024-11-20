@@ -26,19 +26,6 @@ extern "C" {
     void usbFunctionRxHook(const uchar *data, const uchar len);
 }
 
-#define DEBUG_PRINT_ON 1
-#if DEBUG_PRINT_ON
-#define debugPrint(...) serialPrint(__VA_ARGS__)
-#define debugPrintStr6(...) serialPrintStr6(__VA_ARGS__)
-#define debugPrintHex(...) serialPrintHex(__VA_ARGS__)
-#define debugPrintDec(...) serialPrintDec(__VA_ARGS__)
-#else
-#define debugPrint(...)
-#define debugPrintStr6(...)
-#define debugPrintHex(...)
-#define debugPrintDec(...)
-#endif
-
 void setup()
 {
     // The oscilator is calibrated to 12.8MHz based on 1ms timing of USB frames
@@ -771,8 +758,14 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
             } break;
-            case 0x6080: { // "Factory Sensor and Stick device parameters"
-                static const PROGMEM uint8_t reply[] = { 0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f, 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
+            case 0x6080: { // "Factory IMU Sensor parameters"
+                static const PROGMEM uint8_t reply[] = {
+                    // 20~37 6-Axis motion sensor Factory calibration
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Acc XYZ origin position when completely horizontal and stick is upside
+                    0x00, 0x40, 0x00, 0x40, 0x00, 0x40, // Acc XYZ sensitivity special coeff, for default sensitivity: ±8G.
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Gyro XYZ origin position when still
+                    0x3b, 0x34, 0x3b, 0x34, 0x3b, 0x34, // Gyro XYZ sensitivity special coeff, for default sensitivity: ±2000dps
+                };
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
             } break;
@@ -782,15 +775,15 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
                 spiReplyLength = sizeof(reply);
             } break;
             case 0x8010: { // User stick calibration
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb2, 0xa1 };
+                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
             } break;
-            case 0x8028: { // Six axis calibration.
-                static const PROGMEM uint8_t reply[] = { 0xbe, 0xff, 0x3e, 0x00, 0xf0, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xfe, 0xff, 0xfe, 0xff, 0x08, 0x00, 0xe7, 0x3b, 0xe7, 0x3b, 0xe7, 0x3b };
+            /*case 0x8028: { // Six axis calibration. ( Not needed because the last two bytes of the stick calibration, above, indicate no IMU calibration).
+                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
                 spiReply = reply;
                 spiReplyLength = sizeof(reply);
-            } break;
+            } break;*/
             default:
                 haltStr6(address & 0xff, STR6("Bad SPI read subcommand")) ;
                 break;
