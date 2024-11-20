@@ -67,6 +67,12 @@ void serialPrintHex(uint8_t byte, const bool wait)
     serialPrintNybble(byte & 0xF, wait);
 }
 
+void serialPrintHex16(uint16_t byte, const bool wait)
+{
+    serialPrintHex((uint8_t)(byte >> 8), wait);
+    serialPrintHex((uint8_t)(byte), wait);
+}
+
 void serialPrintDec(const uint8_t ch, const bool wait)
 {
     uint8_t toPrint = ch % 10;

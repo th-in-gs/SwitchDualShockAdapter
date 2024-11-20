@@ -1,5 +1,6 @@
 #include "serial.h"
 #include "timer.h"
+#include "spiMemory.h"
 #include "packedStrings.h"
 
 #include "descriptors.h"
@@ -272,10 +273,21 @@ static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
 
 static uint16_t eightBitToTwelveBit(const uint16_t eightBit)
 {
-    // return (eightBit << 4) | (eightBit >> 4);
+#if 0
+    // We replicate the high 4 bits into the bottom 4 bits of the
+    // Switch report, so that e.g. 0xFF maps to 0XFFF and 0x00 maps to 0x000
+    // The mid-point of 0x80 maps to 0x808, which is a bit off - but
+    // 0x80 is in fact off too: the real midpoint of [0x00 - 0xff] is 0x7f.8
+    // (using a hexadecimal point there, like a decimal point).
+
+    return (eightBit << 4) | (eightBit >> 4);
+#else
+    // We actually have plenty of time and space to calculate this accurately
+    // without the bit-shifting tricks above.
     uint32_t builder = (uint32_t)eightBit * (uint32_t)0xfff;
     uint16_t twelveBit = builder / (uint32_t)0xff;
     return twelveBit;
+#endif
 }
 
 // Weird extern declaration to keep VS Code happy. It's not actually necessary
@@ -325,11 +337,6 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
 */
 
     // The Switch has 12-bit analog sticks. The Dual Shock has 8-bit.
-    // We replicate the high 4 bits into the bottom 4 bits of the
-    // Switch report, so that e.g. 0xFF maps to 0XFFF and 0x00 maps to 0x000
-    // The mid-point of 0x80 maps to 0x808, which is a bit off - but
-    // 0x80 is in fact off too: the real midpoint of [0x00 - 0xff] is 0x7f.8
-    // (using a hexadecimal point there, like a decimal point).
     //
     // Byte (nybble?) order of the values here strikes me as a bit weird.
     // If the three bytes (with two nybbles each) are AB CD EF,
@@ -342,7 +349,7 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     uint16_t leftStickY12 = eightBitToTwelveBit(leftStickY);
     uint16_t leftStickX12 = eightBitToTwelveBit(leftStickX);
     switchReport->leftStick[2] = leftStickY12 >> 4;
-    switchReport->leftStick[1] = ((leftStickY12 & 0xf) << 4) | (leftStickX12 >> 8);
+    switchReport->leftStick[1] = (leftStickY12 << 4) | (leftStickX12 >> 8);
     switchReport->leftStick[0] = leftStickX12 & 0xff;
 
     uint8_t rightStickX = dualShockReport->rightStickX;
@@ -352,7 +359,7 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     uint16_t rightStickY12 = eightBitToTwelveBit(rightStickY);
     uint16_t rightStickX12 = eightBitToTwelveBit(rightStickX);
     switchReport->rightStick[2] = rightStickY12 >> 4;
-    switchReport->rightStick[1] = ((rightStickY12 & 0xf) << 4) | (rightStickX12 >> 8);
+    switchReport->rightStick[1] = (rightStickY12 << 4) | (rightStickX12 >> 8);
     switchReport->rightStick[0] = rightStickX12 & 0xff;
 }
 
@@ -565,13 +572,8 @@ static void prepareUartReplyReport(uint8_t ack, uint8_t subCommand, const uint8_
     return prepareUartReplyReport_F(ack, subCommand, reportIn, reportInLen, memcpy);
 }
 
-static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t length, const uint8_t *replyData, uint8_t replyDataLength)
+static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t replyDataLength)
 {
-    if(replyDataLength != length) {
-        debugPrintHex(address);
-        debugPrintHex(length);
-        debugPrintHex(replyDataLength);
-    }
 
     const uint8_t bufferLength = replyDataLength + 5;
     uint8_t buffer[bufferLength];
@@ -580,7 +582,12 @@ static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t length, const 
     buffer[2] = 0;
     buffer[3] = 0;
     buffer[4] = (uint8_t)(replyDataLength);
-    memcpy_P(&buffer[5], replyData, replyDataLength);
+
+    bool spiReadSuccess = spiMemoryRead(&buffer[5], address, replyDataLength);
+
+    if(!spiReadSuccess) {
+        haltStr6(address, STR6("Bad SPI read"));
+    }
 
     return prepareUartReplyReport(0x90, 0x10, buffer, bufferLength);
 }
@@ -730,65 +737,13 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             // ('SPI' because it's NVRAM connected by SPI in a real Pro Controller)
             const uint16_t address = reportIn[11] | reportIn[12] << 8;
             const uint16_t length = reportIn[15];
-            debugPrint('<');
-            debugPrintHex(address);
-            debugPrint('-');
-            debugPrintHex(length);
 
-            const uint8_t *spiReply = NULL;
-            uint8_t spiReplyLength = 0;
-            switch(address) {
-            case 0x6000: { // Serial number in non-extended ASCII. If first byte is >= x80, no S/N.
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            case 0x6020: { // Sixaxis config
-                static const PROGMEM uint8_t reply[] = { 0xD3, 0xFF, 0xD5, 0xFF, 0x55, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x19, 0x00, 0xDD, 0xFF, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34 };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            case 0x603d: { // Left/right stick calibration (9 values each), body, buttons (this overlaps with the range for the next address, below)
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x32, 0x32, 0x32, 0xff, 0xff, 0xff };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            case 0x6050: { // 24-bit (3 byte) RGB colors - body, buttons, left grip, right grip (and an extra 0xff? Maybe it signifies whether the grips are colored?)
-                static const PROGMEM uint8_t reply[] = { 0x32, 0x32, 0x32, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            case 0x6080: { // "Factory IMU Sensor parameters"
-                static const PROGMEM uint8_t reply[] = {
-                    // 20~37 6-Axis motion sensor Factory calibration
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Acc XYZ origin position when completely horizontal and stick is upside
-                    0x00, 0x40, 0x00, 0x40, 0x00, 0x40, // Acc XYZ sensitivity special coeff, for default sensitivity: ±8G.
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Gyro XYZ origin position when still
-                    0x3b, 0x34, 0x3b, 0x34, 0x3b, 0x34, // Gyro XYZ sensitivity special coeff, for default sensitivity: ±2000dps
-                };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            case 0x6098: { // "Factory Stick device parameters 2, normally the same as 1, even in Pro Controller" [note this is indeed the same as the stick parameters above]
-                static const PROGMEM uint8_t reply[] = { 0x0f, 0x30, 0x61, 0x96, 0x30, 0xf3, 0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            case 0x8010: { // User stick calibration
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;
-            /*case 0x8028: { // Six axis calibration. ( Not needed because the last two bytes of the stick calibration, above, indicate no IMU calibration).
-                static const PROGMEM uint8_t reply[] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-                spiReply = reply;
-                spiReplyLength = sizeof(reply);
-            } break;*/
-            default:
-                haltStr6(address & 0xff, STR6("Bad SPI read subcommand")) ;
-                break;
-            }
-            prepareUartSpiReplyReport_P(address, length, spiReply, spiReplyLength);
+            debugPrint('<');
+            debugPrintHex16(address);
+            debugPrint(',');
+            debugPrintHex16(length);
+
+            prepareUartSpiReplyReport_P(address, length);
         } break;
         case 0x04: // Trigger buttons elapsed time (?)
             prepareUartReplyReport_P(0x83, uartCommand, NULL, 0);

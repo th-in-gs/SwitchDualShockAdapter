@@ -16,10 +16,11 @@ void serialPrint(const uint8_t ch, const bool wait = false);
 //void serialPrint(const char *string, const bool wait = false);
 void serialPrintStr6(const uint8_t *str6, const bool wait = false);
 void serialPrintHex(uint8_t byte, const bool wait = false);
+void serialPrintHex16(uint16_t byte, const bool wait = false);
 void serialPrintDec(const uint8_t ch, const bool wait = false);
 
 #ifndef DEBUG_PRINT_ON
-#define DEBUG_PRINT_ON 0
+#define DEBUG_PRINT_ON 1
 #endif
 
 
@@ -27,11 +28,13 @@ void serialPrintDec(const uint8_t ch, const bool wait = false);
 #define debugPrint(...) serialPrint(__VA_ARGS__)
 #define debugPrintStr6(...) serialPrintStr6(__VA_ARGS__)
 #define debugPrintHex(...) serialPrintHex(__VA_ARGS__)
+#define debugPrintHex16(...) serialPrintHex16(__VA_ARGS__)
 #define debugPrintDec(...) serialPrintDec(__VA_ARGS__)
 #else
 #define debugPrint(...)
 #define debugPrintStr6(...)
 #define debugPrintHex(...)
+#define debugPrintHex16(...)
 #define debugPrintDec(...)
 #endif
 
