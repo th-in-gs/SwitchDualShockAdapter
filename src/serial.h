@@ -18,11 +18,12 @@ void serialPrintStr6(const uint8_t *str6, const bool wait = false);
 void serialPrintHex(uint8_t byte, const bool wait = false);
 void serialPrintHex16(uint16_t byte, const bool wait = false);
 void serialPrintDec(const uint8_t ch, const bool wait = false);
+void serialPrintBuffer(const void *buffer, uint8_t length);
+
 
 #ifndef DEBUG_PRINT_ON
 #define DEBUG_PRINT_ON 1
 #endif
-
 
 #if DEBUG_PRINT_ON
 #define debugPrint(...) serialPrint(__VA_ARGS__)

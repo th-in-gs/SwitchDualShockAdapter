@@ -258,6 +258,7 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
     return errored ? 0 : byteIndex;
 }
 
+/*
 static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
     const int16_t xDiff = (int16_t)*x - 0x80;
     const int16_t yDiff = (int16_t)*y - 0x80;
@@ -270,6 +271,7 @@ static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
         *y = 0x80;
     }
 }
+*/
 
 static uint16_t eightBitToTwelveBit(const uint16_t eightBit)
 {
@@ -344,7 +346,7 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
 
     uint8_t leftStickX = dualShockReport->leftStickX;
     uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
-    deadZoneizeStickPosition(&leftStickX, &leftStickY);
+    //deadZoneizeStickPosition(&leftStickX, &leftStickY);
 
     uint16_t leftStickY12 = eightBitToTwelveBit(leftStickY);
     uint16_t leftStickX12 = eightBitToTwelveBit(leftStickX);
@@ -354,7 +356,7 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
 
     uint8_t rightStickX = dualShockReport->rightStickX;
     uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
-    deadZoneizeStickPosition(&rightStickX, &rightStickY);
+    //deadZoneizeStickPosition(&rightStickX, &rightStickY);
 
     uint16_t rightStickY12 = eightBitToTwelveBit(rightStickY);
     uint16_t rightStickX12 = eightBitToTwelveBit(rightStickX);
@@ -745,6 +747,22 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
 
             prepareUartSpiReplyReport_P(address, length);
         } break;
+        case 0x11: {
+            // 'SPI' NVRAM write
+            const uint16_t address = reportIn[11] | reportIn[12] << 8;
+            const uint16_t length = reportIn[15];
+            const uint8_t *buffer = &reportIn[16];
+
+            debugPrint('>');
+            debugPrintHex16(address);
+            debugPrint(',');
+            debugPrintHex16(length);
+
+            spiMemoryWrite(address, buffer, length);
+
+            prepareUartReplyReport(0x80, uartCommand, (const uint8_t[]){0}, 1);
+            break;
+        }
         case 0x04: // Trigger buttons elapsed time (?)
             prepareUartReplyReport_P(0x83, uartCommand, NULL, 0);
             break;

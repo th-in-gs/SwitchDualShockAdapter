@@ -5,5 +5,6 @@
 #include <avr/pgmspace.h>
 
 bool spiMemoryRead(uint8_t *out, uint16_t address, uint16_t length);
+bool spiMemoryWrite(uint16_t address, const uint8_t *buffer, uint16_t length);
 
 #endif

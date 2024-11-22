@@ -73,6 +73,20 @@ void serialPrintHex16(uint16_t byte, const bool wait)
     serialPrintHex((uint8_t)(byte), wait);
 }
 
+void serialPrintBuffer(const void *buffer, uint8_t length)
+{
+    const uint8_t *cursor = (const uint8_t *)buffer;
+    const uint8_t *end = (const uint8_t *)buffer + length;
+    for(; cursor < end;) {
+        const uint8_t *lineEndCursor = cursor + 8;
+        for(; cursor < end && cursor < lineEndCursor; ++cursor) {
+            serialPrintHex(*cursor);
+            serialPrint(' ');
+        }
+        serialPrint('\n');
+    }
+}
+
 void serialPrintDec(const uint8_t ch, const bool wait)
 {
     uint8_t toPrint = ch % 10;
