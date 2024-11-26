@@ -13,7 +13,7 @@
 // To save program flash space, we store only the ranges of the Pro Controller's
 // SPI memory that are actually accessed by the Switch in regular usage.
 
-struct spiSegment { uint16_t address; uint16_t length; const uint8_t *memory; };
+struct spiSegment { const uint16_t address; const uint16_t length; const uint8_t *memory; };
 
 static const PROGMEM uint8_t x6000[] = {
     // Serial number in non-extended ASCII. If first byte is >= x80, no S/N.
@@ -121,14 +121,14 @@ static const uint8_t spiMemoryLength = sizeof(spiMemory) / sizeof(spiSegment);
 
 bool spiMemoryRead(uint8_t *out, uint16_t address, uint16_t length)
 {
-    uint16_t afterReadAddress = address + length;
+    const uint16_t afterReadAddress = address + length;
 
     for(uint8_t i = 0; i < spiMemoryLength; ++i) {
-        uint16_t segmentAddress = pgm_read_word(&spiMemory[i].address);
+        const uint16_t segmentAddress = pgm_read_word(&spiMemory[i].address);
         if(segmentAddress <= address) {
-            uint16_t segmentLength = pgm_read_word(&spiMemory[i].length);
+            const uint16_t segmentLength = pgm_read_word(&spiMemory[i].length);
 
-            uint16_t afterSegmentEnd = segmentAddress + segmentLength;
+            const uint16_t afterSegmentEnd = segmentAddress + segmentLength;
             if(afterSegmentEnd >= afterReadAddress) {
                 memcpy_P(out, (const uint8_t *)pgm_read_ptr(&spiMemory[i].memory) + (address - segmentAddress), length);
                 return true;
