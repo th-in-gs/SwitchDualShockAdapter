@@ -20,14 +20,18 @@ const uint8_t str6CharAtIndex(const uint8_t *data, const uint8_t index) {
         ch |= pgm_read_byte(&data[startByte + 1]) >> (8 - startBit);
     }
     ch = 0x20 + (ch >> 2);
-    if(ch == '^') {
+    switch(ch) {
+    case '^':
         ch = '\n';
-    }
-    if(ch == '!') {
+        break;
+    case '!':
         ch = '|';
-    }
-    if(ch == ';') {
+        break;
+    case ';':
         ch = '\0';
+        break;
+    default:
+        break;
     }
     return ch;
 }
