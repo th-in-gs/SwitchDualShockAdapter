@@ -31,12 +31,14 @@ void serialPrintBuffer(const void *buffer, uint8_t length);
 #define debugPrintHex(...) serialPrintHex(__VA_ARGS__)
 #define debugPrintHex16(...) serialPrintHex16(__VA_ARGS__)
 #define debugPrintDec(...) serialPrintDec(__VA_ARGS__)
+#define debugPrintBuffer(...) serialPrintBuffer(__VA_ARGS__)
 #else
 #define debugPrint(...)
 #define debugPrintStr6(...)
 #define debugPrintHex(...)
 #define debugPrintHex16(...)
 #define debugPrintDec(...)
+#define debugPrintBuffer(...)
 #endif
 
 #endif // __timer_h_included__

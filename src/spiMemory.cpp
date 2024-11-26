@@ -28,7 +28,6 @@ static const PROGMEM uint8_t x6020[] = {
     0x3b, 0x34, 0x3b, 0x34, 0x3b, 0x34, // Gyro XYZ sensitivity special coeff, for default sensitivity: ±2000dps
 };
 
-
 #if USE_PRO_CONTROLLER_DEFAULTS
 static const PROGMEM uint8_t x603d[] = {
     // Analog stick factory config
@@ -50,7 +49,7 @@ static const PROGMEM uint8_t x603d[] = {
     0xff, 0xff, 0xff, // Left Grip
     0xff, 0xff, 0xff, // Right Grip
     0xff, // Extra 0xff? Maybe it signifies whether the grips are colored?
-}
+};
 #else
 static const PROGMEM uint8_t x603d[] = {
     // Analog stick factory config
@@ -79,8 +78,8 @@ static const PROGMEM uint8_t x603d[] = {
 static const PROGMEM uint8_t x6080[] = {
     // "Factory Sensor and Stick device parameters
     0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f,
-    0x0f, 0x30, 0x61,
-    0x96, 0x30, 0xf3,
+    0x0f, 0x30, 0x61, // Unknown
+    0x96, 0x30, 0xf3, // Dead Zone: 0x096 (150), 'Range Ratio'(?): 0xf33
     0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63
 };
 
@@ -88,15 +87,17 @@ static const PROGMEM uint8_t x6098[] = {
     // "Factory Stick device parameters 2, normally the same as 1, even in Pro Controller"
     // [note this is indeed the same as the stick parameters above]
     0x0f, 0x30, 0x61, // Unknown
-    0x96, 0x30, 0xf3, // Dead Zone: 0x096 (150), 'Range Ratio'(?): 0xf30
+    0x96, 0x30, 0xf3, // Dead Zone: 0x096 (150), 'Range Ratio'(?): 0xf33
     0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 // Unknown
 };
 #else
+
+// Dead zones manually adjusted to my PSone DualShock. Maybe wrong generally?
 static const PROGMEM uint8_t x6080[] = {
     // "Factory Sensor and Stick device parameters
     0x50, 0xfd, 0x00, 0x00, 0xc6, 0x0f,
-    0x0f, 0x30, 0x61,
-    0x96, 0x30, 0xf3,
+    0x0f, 0x30, 0x61, // Unknown
+    0xf0, 0x30, 0xf3, // Dead Zone: 0x0f0 (240), 'Range Ratio'(?): 0xf33
     0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63
 };
 
@@ -104,7 +105,7 @@ static const PROGMEM uint8_t x6098[] = {
     // "Factory Stick device parameters 2, normally the same as 1, even in Pro Controller"
     // [note this is indeed the same as the stick parameters above]
     0x0f, 0x30, 0x61, // Unknown
-    0x96, 0x30, 0xf3, // Dead Zone: 0x096 (150), 'Range Ratio'(?): 0xf30
+    0xf0, 0x30, 0xf3, // Dead Zone: 0x0f0 (240), 'Range Ratio'(?): 0xf33
     0xd4, 0x14, 0x54, 0x41, 0x15, 0x54, 0xc7, 0x79, 0x9c, 0x33, 0x36, 0x63 // Unknown
 };
 #endif
@@ -141,8 +142,8 @@ bool spiMemoryRead(uint8_t *out, uint16_t address, uint16_t length)
         const void *eepromAddress = (const void *)(intptr_t)(address - 0x8010);
         eeprom_read_block(out, eepromAddress, length);
 
-        serialPrintStr6(STR6("\nSPI Read:\n"));
-        serialPrintBuffer(out, length);
+        debugPrintStr6(STR6("\n< SPI:\n"));
+        debugPrintBuffer(out, length);
 
         return true;
     }
@@ -157,8 +158,8 @@ bool spiMemoryWrite(uint16_t address, const uint8_t *buffer, uint16_t length)
         void *eepromAddress = (void *)(intptr_t)(address - 0x8010);
         eeprom_update_block(buffer, eepromAddress, length);
 
-        serialPrintStr6(STR6("\nSPI Write:\n"));
-        serialPrintBuffer(buffer, length);
+        debugPrintStr6(STR6("> SPI:\n"));
+        debugPrintBuffer(buffer, length);
 
         return true;
     }

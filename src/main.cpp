@@ -13,6 +13,7 @@
 #include <math.h>
 
 #include <avr/pgmspace.h>
+#include <avr/eeprom.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 #include <util/delay.h>
@@ -25,6 +26,21 @@ extern "C" {
     uint8_t lastTimer0Value = 0;
 
     void usbFunctionRxHook(const uchar *data, const uchar len);
+}
+
+#define EEPROM_MAGIC 0x0004
+void prepareEEPROM()
+{
+    static uint16_t * const lastInt16 = (uint16_t *)(E2END - 1);
+    uint16_t serial = eeprom_read_word(lastInt16);
+    if(serial != EEPROM_MAGIC) {
+        debugPrintStr6(STR6("EEPROM\n"));
+        for(uint16_t *cursor = 0; cursor < lastInt16; ++cursor) {
+            eeprom_update_word(cursor, 0xffff);
+        }
+        eeprom_update_word(lastInt16, EEPROM_MAGIC);
+        //debugPrintStr6(STR6("Cleared\n"));
+    }
 }
 
 void setup()
@@ -50,6 +66,8 @@ void setup()
     // Initialize our utility functions.
     timerInit();
     serialInit(266667);
+
+    prepareEEPROM();
 
     // Set port 2 outputs. Most of these pins are prescribed by the ATmega's
     // built in SPI communication hardware.
@@ -258,21 +276,6 @@ static uint8_t dualShockCommand(const uint8_t *command, const uint8_t commandLen
     return errored ? 0 : byteIndex;
 }
 
-/*
-static void deadZoneizeStickPosition(uint8_t *x, uint8_t *y) {
-    const int16_t xDiff = (int16_t)*x - 0x80;
-    const int16_t yDiff = (int16_t)*y - 0x80;
-    const int16_t distance_squared = (xDiff * xDiff) + (yDiff * yDiff);
-
-    static const int16_t deadZoneRadiusSquared = pow(ceil(0xff * 0.15), 2);
-
-    if (distance_squared <= deadZoneRadiusSquared) {
-        *x = 0x80;
-        *y = 0x80;
-    }
-}
-*/
-
 static uint16_t eightBitToTwelveBit(const uint16_t eightBit)
 {
 #if 0
@@ -345,21 +348,17 @@ static void convertDualShockToSwitch(const DualShockReport *dualShockReport, Swi
     // the decoded 12-bit values are DAB, EFC. It makes more sense 'backwards'?
 
     uint8_t leftStickX = dualShockReport->leftStickX;
-    uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
-    //deadZoneizeStickPosition(&leftStickX, &leftStickY);
-
-    uint16_t leftStickY12 = eightBitToTwelveBit(leftStickY);
     uint16_t leftStickX12 = eightBitToTwelveBit(leftStickX);
+    uint8_t leftStickY = 0xff - dualShockReport->leftStickY;
+    uint16_t leftStickY12 = eightBitToTwelveBit(leftStickY);
     switchReport->leftStick[2] = leftStickY12 >> 4;
     switchReport->leftStick[1] = (leftStickY12 << 4) | (leftStickX12 >> 8);
     switchReport->leftStick[0] = leftStickX12 & 0xff;
 
     uint8_t rightStickX = dualShockReport->rightStickX;
-    uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
-    //deadZoneizeStickPosition(&rightStickX, &rightStickY);
-
-    uint16_t rightStickY12 = eightBitToTwelveBit(rightStickY);
     uint16_t rightStickX12 = eightBitToTwelveBit(rightStickX);
+    uint8_t rightStickY = 0xff - dualShockReport->rightStickY;
+    uint16_t rightStickY12 = eightBitToTwelveBit(rightStickY);
     switchReport->rightStick[2] = rightStickY12 >> 4;
     switchReport->rightStick[1] = (rightStickY12 << 4) | (rightStickX12 >> 8);
     switchReport->rightStick[0] = rightStickX12 & 0xff;
@@ -891,9 +890,9 @@ void usbFunctionRxHook(const uchar *data, const uchar len)
         }
     }
 
-    if(usbCrc16(data, len + 2) != 0x4FFE) {
+   /* if(usbCrc16(data, len + 2) != 0x4FFE) {
         haltStr6(0, STR6("Bad CRC")) ;
-    }
+    }*/
 }
 
 usbMsgLen_t usbFunctionSetup(uchar data[8])
@@ -1108,6 +1107,9 @@ void loop()
             }
         }
     } else {
+        // Clear any pending reports.
+        sReportPending = false;
+
         // Switch off the debug LED to save power.
         PORTB |= (1 << 0);
 
