@@ -5,6 +5,7 @@
 
 #include "descriptors.h"
 #include "rumble.h"
+#include "compile_time_mac.h"
 
 #include <stdlib.h>
 #include <stddef.h>
@@ -28,7 +29,7 @@ extern "C" {
     void usbFunctionRxHook(const uchar *data, const uchar len);
 }
 
-#define EEPROM_MAGIC 0x0004
+#define EEPROM_MAGIC 0x0007
 void prepareEEPROM()
 {
     static uint16_t * const lastInt16 = (uint16_t *)(E2END - 1);
@@ -689,9 +690,11 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
             sInputReportsSuspended = false;
         } break;
         case 0x01: {
-            // Request controller info inc. MAC address
-            static const PROGMEM uint8_t reply[] = { 0x00, 0x03, 0x43, 0x23, 0x53, 0x22, 0xa3, 0xc7 };
-            prepareRegularReplyReport_P(0x81, command, reply, sizeof(reply));
+            // Request controller info inc. MAC address (last 6 bytes)
+            {
+                static const PROGMEM uint8_t reply[] = { 0x00, 0x03, COMPILE_TIME_MAC_MSB_BYTES };
+                prepareRegularReplyReport_P(0x81, command, reply, sizeof(reply));
+            }
         } break;
         case 0x02: {
             // "Sends handshaking packets over UART to the Joy-Con or Pro Controller"
@@ -723,15 +726,17 @@ static void usbFunctionWriteOutOrAbandon(uchar *data, uchar len, bool shouldAban
         } break;
         case 0x02: {
             // Request device info
-            static const PROGMEM uint8_t reply[] = {
-                0x03, 0x48, // FW Version
-                0x03, // Pro Controller
-                0x02, // Unknown (Always 0x02)
-                0xc7, 0xa3, 0x22, 0x53, 0x23, 0x43, // 6 bytes of MAC address
-                0x03, // Unknown
-                0x01, // 0x01 = Use colors from SPI (below).
-            };
-            prepareUartReplyReport_P(0x82, uartCommand, reply, sizeof(reply));
+            {
+                static const PROGMEM uint8_t reply[] = {
+                    0x03, 0x48, // FW Version
+                    0x03, // Pro Controller
+                    0x02, // Unknown (Always 0x02)
+                    COMPILE_TIME_MAC_LSB_BYTES,
+                    0x03, // Unknown
+                    0x01, // Use colors from SPI
+                };
+                prepareUartReplyReport_P(0x82, uartCommand, reply, sizeof(reply));
+            }
         } break;
         case 0x10: {
             // 'SPI' NVRAM read
