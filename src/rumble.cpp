@@ -16,8 +16,6 @@
 #include <avr/builtins.h>
 #include <avr/pgmspace.h>
 #include <string.h>
-#include <assert.h>
-#include <math.h>
 
 /*
 static const PROGMEM uint16_t rumble_freq_lut[] = {

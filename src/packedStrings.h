@@ -1,11 +1,8 @@
 #ifndef __packedstrings_h_included__
 #define __packedstrings_h_included__
 
-#include <stdio.h>
 #include <stdint.h>
-#include <ctype.h>
 #include <string.h>
-#include <math.h>
 #include <avr/pgmspace.h>
 
 #define STR7(str) (__extension__({ static PROGMEM const PackedStringConstexpr<7, sizeof(str)> __c = PackedStringConstexpr<7, sizeof(str)>(str); __c.data; }))

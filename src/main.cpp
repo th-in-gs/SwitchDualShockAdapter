@@ -9,9 +9,10 @@
 
 #include <stdlib.h>
 #include <stddef.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <string.h>
-#include <math.h>
+#include <stddef.h>
 
 #include <avr/pgmspace.h>
 #include <avr/eeprom.h>
