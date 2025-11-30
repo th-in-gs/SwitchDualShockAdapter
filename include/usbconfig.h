@@ -253,8 +253,12 @@ section at the end of this file).
  * the macros. See the file USB-IDs-for-free.txt before you assign a name if
  * you use a shared VID/PID.
  */
-#define USB_CFG_SERIAL_NUMBER     '0','0','0','0','0','0','0','0','0','0','0','1'
-#define USB_CFG_SERIAL_NUMBER_LEN 12
+//#define USB_CFG_SERIAL_NUMBER     '0','0','0','0','0','0','0','0','0','0','0','1'
+//#define USB_CFG_SERIAL_NUMBER_LEN 12
+//`compile_time_mac.h` provides `USB_CFG_SERIAL_NUMBER` and
+//`USB_CFG_SERIAL_NUMBER_LEN` generated at build time.
+#include "compile_time_mac.h"
+
 /* Same as above for the serial number. If you don't want a serial number,
  * undefine the macros.
  * It may be useful to provide the serial number through other means than at

@@ -108,7 +108,7 @@ PROGMEM const char usbDescriptorConfiguration[] = {
     USB_PROP_LENGTH(USB_CFG_DESCR_PROPS_CONFIGURATION), 0,
                                 // 16: total length of data returned
                                 //     (including inlined descriptors)
-    2,                          //  8: number of interfaces in this configuration
+    1,                          //  8: number of interfaces in this configuration
     1,                          //  8: configuration value
                                 //     (index of this configuration)
     0,                          //  8: configuration name string index (no name)
@@ -145,7 +145,7 @@ PROGMEM const char usbDescriptorConfiguration[] = {
             0x81,                       //  8: IN endpoint number 1
             0x03,                       //  8: attrib: Interrupt endpoint
             8, 0,                       // 16: maximum packet size
-            2,                          //  8: poll interval in ms
+            5,                          //  8: poll interval in ms
 
             7,                          //  8: sizeof(usbDescrEndpoint)
             USBDESCR_ENDPOINT,          //  8: descriptor type = endpoint

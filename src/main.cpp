@@ -33,7 +33,7 @@ extern "C" {
 #define EEPROM_MAGIC 0x0007
 void prepareEEPROM()
 {
-    static uint16_t * const lastInt16 = (uint16_t *)(E2END - 1);
+    static uint16_t * const lastInt16 = ((uint16_t *)E2END) - 1;
     uint16_t serial = eeprom_read_word(lastInt16);
     if(serial != EEPROM_MAGIC) {
         debugPrintStr6(STR6("EEPROM\n"));
@@ -589,7 +589,7 @@ static void prepareUartSpiReplyReport_P(uint16_t address, uint8_t replyDataLengt
     bool spiReadSuccess = spiMemoryRead(&buffer[5], address, replyDataLength);
 
     if(!spiReadSuccess) {
-        haltStr6(address, STR6("Bad SPI read"));
+        haltStr6(address, STR6("Bad SPI"));
     }
 
     return prepareUartReplyReport(0x90, 0x10, buffer, bufferLength);
